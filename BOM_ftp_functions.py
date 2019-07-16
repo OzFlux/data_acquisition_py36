@@ -288,8 +288,8 @@ def haversine(lat1, lon1, lat2, lon2):
     dlat = lat2 - lat1 
     a = (math.sin(dlat / 2)**2 + math.cos(lat1) * 
          math.cos(lat2) * math.sin(dlon / 2)**2)
+    r = 6371 # Radius of earth in kilometers
     c = 2 * math.asin(math.sqrt(a)) 
-    r = 6371 # Radius of earth in kilometers. Use 3956 for miles
     return c * r
 #------------------------------------------------------------------------------
 
@@ -337,7 +337,6 @@ def _get_ftp_data(search_list = None, get_first = True):
         if 'globalsolar' in this_file: continue
         in_file = os.path.join(ftp_dir, this_file)
         f_str = 'RETR {0}'.format(in_file)
-#        sio = StringIO()
         bio = BytesIO()
         ftp.retrbinary(f_str, bio.write)
         bio.seek(0)
