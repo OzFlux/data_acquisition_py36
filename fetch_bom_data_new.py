@@ -34,6 +34,73 @@ class bom_data(object):
         self.file_format = bomftp.get_data_file_formatting()
         self._zfile = bomftp._get_ftp_data()
 
+    #--------------------------------------------------------------------------
+    def file_id_dict(self):
+        
+        """Get a dictionary referencing the file name by key of BOM site ID"""
+        
+        data_list = [x for x in self._zfile.namelist() if 'Data' in x]
+        return dict(zip([x.split('_')[2] for x in data_list], data_list)) 
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def generate_dummy_line(self, station_id, datetime):
+    
+        """Write out a line of dummy data with correct spacing and site 
+           details, but no met data"""
+        
+        station_details = self.stations.loc()
+        start_list = ['dd', station_details.station_id, 
+                      station_details.station_name.zfill(40)]
+        try:
+            local_datetime = get_local_datetime(datetime, 
+                                                station_details.timezone)
+            local_datetime_str = dt.datetime.strftime(local_datetime, 
+                                                      '%Y,%m,%d,%H,%M')
+        except UnknownTimeZoneError:
+            local_datetime_str = '    ,  ,  ,  ,  '
+        start_list.append(local_datetime_str)
+        start_list.append(dt.datetime.strftime(datetime, '%Y,%m,%d,%H,%M'))
+        blank_list = [' ' * x for x in self.file_format.Byte_length]
+        new_str = ','.join((start_list + blank_list[5: -1] + ['#\r\n']))
+        return set_line_order(new_str)                        
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def header_list(self):
+    
+        """Get formatted header list for the output file"""
+        
+        headers = self.file_format.Description.tolist()
+        new_headers = headers[:2] + headers[3:9] + headers[11:]
+        new_headers[0] = new_headers[0].split('-')[1].lstrip()
+        new_headers[1] = 'Station Number'
+        new_headers[12] = new_headers[12].replace('km/h', 'm/s')
+        new_headers[14] += ' true'
+        new_headers[16] = new_headers[16].replace('km/h', 'm/s')
+        new_headers[-1] = new_headers[-1].replace(',', ' ')
+        new_header_str = ','.join(new_headers) + '\n'
+        return new_header_str
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def _make_tz_request(lat, lon):
+        
+        """Get timezone data from timezonedb API where python timezone fails"""
+        
+        api_key = 'UT66CKBKU8MM'
+        base_url_str = 'http://api.timezonedb.com/v2.1/get-time-zone'
+        end_str = ('?key={0}&format=json&by=position&lat={1}&lng={2}'
+                   .format(api_key, lat, lon))
+        sleep(1)
+        json_obj = requests.get(base_url_str + end_str)
+        if json_obj.status_code == 200:
+            return json.loads(json_obj.content)
+        else: 
+            print ('Timezone request returned status code {}'
+                   .format(json_obj.status_code))
+    #--------------------------------------------------------------------------
+
 #------------------------------------------------------------------------------
 def check_line_integrity(line):
     
@@ -55,25 +122,7 @@ def check_line_integrity(line):
     return True
 #------------------------------------------------------------------------------
 
-#------------------------------------------------------------------------------
-def generate_dummy_line(station_df, datetime):
 
-    """Write out a line of dummy data with correct spacing and site details, 
-       but no met data"""
-    
-    start_list = ['dd', station_df.station_id, station_df.station_name.zfill(40)]
-    try:
-        local_datetime = get_local_datetime(datetime, station_df.timezone)
-        local_datetime_str = dt.datetime.strftime(local_datetime, 
-                                                  '%Y,%m,%d,%H,%M')
-    except UnknownTimeZoneError:
-        local_datetime_str = '    ,  ,  ,  ,  '
-    start_list.append(local_datetime_str)
-    start_list.append(dt.datetime.strftime(datetime, '%Y,%m,%d,%H,%M'))
-    blank_list = [' ' * x for x in format_df.Byte_length]
-    new_str = ','.join((start_list + blank_list[5: -1] + ['#\r\n']))
-    return set_line_order(new_str)                        
-#------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 #def get_header_list():
@@ -103,22 +152,22 @@ def generate_dummy_line(station_df, datetime):
 #         
 #    return [','.join(l)]
 
-#------------------------------------------------------------------------------
-def get_header_list():
-
-    """Get formatted header list for the output file"""
-    
-    headers = format_df.Description.tolist()
-    new_headers = headers[:2] + headers[3:9] + headers[11:]
-    new_headers[0] = new_headers[0].split('-')[1].lstrip()
-    new_headers[1] = 'Station Number'
-    new_headers[12] = new_headers[12].replace('km/h', 'm/s')
-    new_headers[14] += ' true'
-    new_headers[16] = new_headers[16].replace('km/h', 'm/s')
-    new_headers[-1] = new_headers[-1].replace(',', ' ')
-    new_header_str = ','.join(new_headers) + '\n'
-    return new_header_str
-#------------------------------------------------------------------------------
+##------------------------------------------------------------------------------
+#def get_header_list():
+#
+#    """Get formatted header list for the output file"""
+#    
+#    headers = format_df.Description.tolist()
+#    new_headers = headers[:2] + headers[3:9] + headers[11:]
+#    new_headers[0] = new_headers[0].split('-')[1].lstrip()
+#    new_headers[1] = 'Station Number'
+#    new_headers[12] = new_headers[12].replace('km/h', 'm/s')
+#    new_headers[14] += ' true'
+#    new_headers[16] = new_headers[16].replace('km/h', 'm/s')
+#    new_headers[-1] = new_headers[-1].replace(',', ' ')
+#    new_header_str = ','.join(new_headers) + '\n'
+#    return new_header_str
+##------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 def get_local_datetime(dt_obj, tz_name):
@@ -133,23 +182,7 @@ def get_local_datetime(dt_obj, tz_name):
     return dt_obj + dst_offset 
 #------------------------------------------------------------------------------
 
-#------------------------------------------------------------------------------
-def make_tz_request(lat, lon):
-    
-    """Get timezone data from timezonedb API where python timezone fails"""
-    
-    api_key = 'UT66CKBKU8MM'
-    base_url_str = 'http://api.timezonedb.com/v2.1/get-time-zone'
-    end_str = ('?key={0}&format=json&by=position&lat={1}&lng={2}'
-               .format(api_key, lat, lon))
-    sleep(1)
-    json_obj = requests.get(base_url_str + end_str)
-    if json_obj.status_code == 200:
-        return json.loads(json_obj.content)
-    else: 
-        print ('Timezone request returned status code {}'
-               .format(json_obj.status_code))
-#------------------------------------------------------------------------------
+
 
 #------------------------------------------------------------------------------
 def set_line_order(line):
@@ -249,50 +282,50 @@ def get_station_dataframe():
 # Set path to read existing and write new data
 write_path = '/home/ian/Desktop/BOM_data' #'/rdsi/market/AWS_BOM_all'
 
-#x = bom_data()
+x = bom_data()
 
-# Get info about stations
-stations_df = get_station_dataframe()
-
-# Get formatting of data
-format_df = bomftp.get_data_file_formatting()
-
-# Get a zipfile containing most recent ftp data
-z_file = bomftp._get_ftp_data()
-
-# Make a lookup dict for IDs and server file names
-data_list = [x for x in z_file.namelist() if 'Data' in x]
-id_dict = dict(zip([x.split('_')[2] for x in data_list],
-                   data_list)) 
-
-missing_list = []
-
-# Process each file
-for station_id in stations_df.index:
-    
-    # Get site info
-    station_df = stations_df.loc[station_id]    
-    
-    # Print details to screen
-    print ('Processing site {0} ({1})'.format(station_id, 
-                                              station_df['station_name'].rstrip()))
-    
-    # Get all the data from the ftp file and make a dataframe
-    readf_name = id_dict[station_id]
-    with z_file.open(readf_name) as zf:
-        ftp_df = zipfile_to_dataframe(zf, station_df)
-    if not ftp_df: 
-        missing_list.append(station_id)
-        continue # Skip to next of no new data
-
-    # Write any new data to the existing file - open existing in append+, 
-    # then make a local dataframe from the existing data (if any)
-    writef_name = 'HM01X_Data_{}.txt'.format(station_id)    
-    with open(os.path.join(write_path, writef_name), 'a+') as f:
-        content = f.readlines()
-        write_list = get_write_list(content, ftp_df)
-        f.writelines(write_list)
-    
-    # List missing data files    
-    print ('The ftp files for the following stations had no data:'
-           .format(station_id, station_df['station_name'].rstrip()))
+## Get info about stations
+#stations_df = get_station_dataframe()
+#
+## Get formatting of data
+#format_df = bomftp.get_data_file_formatting()
+#
+## Get a zipfile containing most recent ftp data
+#z_file = bomftp._get_ftp_data()
+#
+## Make a lookup dict for IDs and server file names
+#data_list = [x for x in z_file.namelist() if 'Data' in x]
+#id_dict = dict(zip([x.split('_')[2] for x in data_list],
+#                   data_list)) 
+#
+#missing_list = []
+#
+## Process each file
+#for station_id in stations_df.index:
+#    
+#    # Get site info
+#    station_df = stations_df.loc[station_id]    
+#    
+#    # Print details to screen
+#    print ('Processing site {0} ({1})'.format(station_id, 
+#                                              station_df['station_name'].rstrip()))
+#    
+#    # Get all the data from the ftp file and make a dataframe
+#    readf_name = id_dict[station_id]
+#    with z_file.open(readf_name) as zf:
+#        ftp_df = zipfile_to_dataframe(zf, station_df)
+#    if not ftp_df: 
+#        missing_list.append(station_id)
+#        continue # Skip to next of no new data
+#
+#    # Write any new data to the existing file - open existing in append+, 
+#    # then make a local dataframe from the existing data (if any)
+#    writef_name = 'HM01X_Data_{}.txt'.format(station_id)    
+#    with open(os.path.join(write_path, writef_name), 'a+') as f:
+#        content = f.readlines()
+#        write_list = get_write_list(content, ftp_df)
+#        f.writelines(write_list)
+#    
+#    # List missing data files    
+#    print ('The ftp files for the following stations had no data:'
+#           .format(station_id, station_df['station_name'].rstrip()))
