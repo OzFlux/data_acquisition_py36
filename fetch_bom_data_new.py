@@ -9,9 +9,9 @@ Created on Mon Mar 18 10:48:26 2019
 # Standard modules
 import datetime as dt
 import ftplib
-import importlib
 from io import BytesIO
 import json
+import math
 import os
 import pandas as pd
 from pytz import timezone
@@ -23,25 +23,27 @@ import zipfile
 
 import pdb
 
-### Need to check for gaps in the BOM data that is newer than the existing file data
-
-# Custom modules
-import BOM_ftp_functions as bomftp
+## Custom modules
+#import BOM_ftp_functions as bomftp
 
 # Reloads
-importlib.reload(bomftp)
+#importlib.reload(bomftp)
 
 # Configurations
 ftp_server = 'ftp.bom.gov.au'
 ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
+
+#------------------------------------------------------------------------------
+### BEGINNING OF CLASS
+#------------------------------------------------------------------------------
 
 class bom_data(object):
     
     def __init__(self):
         
         self.stations = self.get_station_dataframe()
-        self.file_format = bomftp.get_data_file_formatting()
-        self._zfile, self._empty_files = _get_ftp_data()
+        self.file_format = get_data_file_formatting()
+        self._zfile, self._empty_files = get_ftp_data(list_missing = True)
 
     #--------------------------------------------------------------------------
     def _check_line_integrity(self, line):
@@ -130,7 +132,7 @@ class bom_data(object):
         coords = 'Coords: lat = {}, long = +{}'.format(lat, lon)
         elev = 'Elev: {}m asl'.format(self.stations.loc[station_id, 
                                                         'height_stn_asl'].lstrip())
-        return ', '.join([name_state, coords, elev])
+        return ', '.join([name_state, coords, elev]) + '\n'
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -199,7 +201,7 @@ class bom_data(object):
                        .format(json_obj.status_code))
         
         # Get basic station data
-        stations_df = bomftp.get_aws_station_details()
+        stations_df = get_aws_station_details()
     
         # Create a timezone variable using lookup from python package
         stations_df['timezone'] = [tzf().timezone_at(lng = stations_df.loc[x, 'lon'], 
@@ -235,8 +237,8 @@ class bom_data(object):
         except FileNotFoundError:
             print ('No local file found; writing all available '
                    'remote data to local directory...'.format(station_id))
-            return ([self.get_details_string()] + [self.get_header_string()] + 
-                    ftp_content.Data.tolist())
+            return ([self.get_details_string(station_id)] + 
+                    [self.get_header_string()] + ftp_content.Data.tolist())
         
         # Retain remote data not found in local file and pad dummy cases if
         # there is a gap
@@ -256,6 +258,17 @@ class bom_data(object):
                           for x in date_range] + ftp_content.Data.tolist()
         return write_list
     #------------------------------------------------------------------------------
+
+    #------------------------------------------------------------------------------
+    def report_empty_files(self, station_names = True):
+        
+        """Return list of files that contained no data"""
+        
+        id_list = sorted([x.split('_')[2] for x in self._empty_files])
+        if not station_names: return id_list
+        return list(zip(id_list, [x.stations.loc[i, 'station_name'].rstrip() 
+                                  for i in id_list]))
+    #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def _set_line_order(self, line):
@@ -290,38 +303,44 @@ class bom_data(object):
             if not data_to_write: continue
             with open(local_filepath, 'a+') as f:                
                 f.writelines(data_to_write)
-    #--------------------------------------------------------------------------
+#------------------------------------------------------------------------------
+### END OF CLASS
+#------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-#def get_header_list():
-#        
-#    l = ['hm',
-#         'Station Number',
-#         'Year Month Day Hour Minutes in YYYY,MM,DD,HH24,MI format in Local time',
-#         'Year Month Day Hour Minutes in YYYY,MM,DD,HH24,MI format in Local standard time',
-#         'Precipitation since 9am local time in mm',
-#         'Quality of precipitation since 9am local time',
-#         'Air Temperature in degrees C',
-#         'Quality of air temperature',
-#         'Dew point temperature in degrees C',
-#         'Quality of dew point temperature',
-#         'Relative humidity in percentage %',
-#         'Quality of relative humidity',
-#         'Wind speed in m/s',
-#         'Wind speed quality',
-#         'Wind direction in degrees true',
-#         'Wind direction quality',
-#         'Speed of maximum windgust in last 10 minutes in m/s',
-#         'Quality of speed of maximum windgust in last 10 minutes',
-#         'Station level pressure in hPa',
-#         'Quality of station level pressure',
-#         'AWS Flag',
-#         '#\r\n']
-#         
-#    return [','.join(l)]
+### BEGINNING OF STANDALONE FUNCTIONS
+#------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def _get_ftp_data(search_list = None, get_first = True, list_missing = True):
+def get_data_file_formatting():
+
+    """Gets the file format for the data files on the OzFlux-specific ftp 
+       server"""
+    
+    zf = get_ftp_data(search_list = ['Notes'])
+    with zf.open(zf.namelist()[0]) as file_obj:
+        notes_list = file_obj.readlines()
+    bad_chars = '*_-.'
+    start_line = 19
+    end_line = 44    
+    byte_start = ['Byte_start']
+    byte_length = ['Byte_length']
+    desc = ['Description']
+    for i, line in enumerate(notes_list[start_line:end_line]):
+        line_list = [x.strip() for x in line.decode().split(',')]
+        byte_start.append(int(line_list[0].split('-')[0]))
+        byte_length.append(int(line_list[1]))
+        if i > 1: line_list[2] = line_list[2].translate({ord(c): None for c in 
+                                                         bad_chars})
+        if len(line_list) > 2: line_list[2] = ','.join(line_list[2:])
+        desc.append(line_list[2].rstrip('.').lstrip())
+    return pd.DataFrame({byte_start[0]: byte_start[1:],
+                         byte_length[0]: byte_length[1:],
+                         desc[0]: desc[1:]})
+#------------------------------------------------------------------------------        
+
+#------------------------------------------------------------------------------
+def get_ftp_data(search_list = None, get_first = True, list_missing = False):
     
     """Function to retrieve zipfile containing data files for AWS stations 
        on OzFlux ftp server site
@@ -377,16 +396,104 @@ def _get_ftp_data(search_list = None, get_first = True, list_missing = True):
     return master_zf
 #------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
+def get_nearest_bom_station(lat, lon, current = True, nearest_n = 5):
+    
+    """Uses haversine formula to estimate distance from given coordinates
+       to nearest x stations"""
+    
+    stations = get_aws_station_details()
+    stations['dist (km)'] = list(map(lambda x: haversine(lat, lon, 
+                                                         stations.loc[x, 'lat'], 
+                                                         stations.loc[x, 'lon']),
+                                     stations.index))
+    if current:
+        year = str(dt.datetime.now().year)
+        stations = stations.loc[stations.last_file_year == year]
+    df = stations.sort_values(['dist (km)']).head(nearest_n)
+    return df[['station_name', 'lat', 'lon', 'dist (km)']]
+#------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
+def get_station_details_formatting(truncate_description = True):
 
+    """Gets the file format for the station details file on the ozflux-specific 
+       ftp server"""
+    
+    simple_list = ['record_id', 'station_id', 'rainfall_district_id', 
+                    'station_name', 'month_year_opened', 'month_year_closed',
+                    'lat', 'lon', 'coords_derivation', 'State', 
+                    'height_stn_asl', 'height_barom_asl', 'wmo_id', 
+                    'first_file_year', 'last_file_year', 'pct_complete',
+                    'pct_vals_Y', 'pct_vals_N', 'pct_vals_W', 'pct_vals_S',
+                    'pct_vals_I', 'eor']
+    start_line = 207
+    end_line = 229    
+    zf = get_ftp_data(search_list = ['Notes'])
+    with zf.open(zf.namelist()[0]) as file_obj:
+        notes_list = file_obj.readlines()
+    byte_start = ['Byte_start']
+    byte_length = ['Byte_length']
+    desc = ['Description']
+    if truncate_description: desc += simple_list
+    for line in notes_list[start_line:end_line]:
+        line_list = [x.strip() for x in line.decode().split(',')]
+        byte_start.append(int(line_list[0].split('-')[0]))
+        byte_length.append(int(line_list[1]))
+        if not truncate_description: desc.append(line_list[2].rstrip())
+    return pd.DataFrame({byte_start[0]: byte_start[1:],
+                         byte_length[0]: byte_length[1:],
+                         desc[0]: desc[1:]})
+#------------------------------------------------------------------------------
+    
+#------------------------------------------------------------------------------
+def haversine(lat1, lon1, lat2, lon2):
+    
+    """
+    Calculate the great circle distance between two points 
+    on the earth (specified in decimal degrees)
+    """
 
+    # convert decimal degrees to radians 
+    lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
 
+    # haversine formula 
+    dlon = lon2 - lon1 
+    dlat = lat2 - lat1 
+    a = (math.sin(dlat / 2)**2 + math.cos(lat1) * 
+         math.cos(lat2) * math.sin(dlon / 2)**2)
+    r = 6371 # Radius of earth in kilometers
+    c = 2 * math.asin(math.sqrt(a)) 
+    return c * r
+#------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
+def get_aws_station_details():
+    
+    """Retrieves a dataframe containing details of all AWS stations on the 
+       OzFlux ftp server site"""
+       
+    zf = get_ftp_data(['StnDet'], get_first = False)
+    data_list = []
+    for f in zf.namelist():
+        with zf.open(f) as file_obj:
+            for line in file_obj:
+                data_list += [line.decode().split(',')]
+    notes_df = get_station_details_formatting()
+    df = pd.DataFrame(data_list, columns = notes_df.Description)
+    for col in [x for x in df.columns if not 'station_id' in x]:
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except ValueError:
+            continue
+    df.index = df['station_id']
+    return df.sort_index()
+#------------------------------------------------------------------------------
+### END OF STANDALONE FUNCTIONS
+#------------------------------------------------------------------------------
 
-
-
-
-# Main program
+#------------------------------------------------------------------------------
+### MAIN PROGRAM
 #------------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -395,49 +502,33 @@ if __name__ == "__main__":
     write_path = '/home/ian/Desktop/BOM_data' #'/rdsi/market/AWS_BOM_all'
     
     x = bom_data()
+    
+#------------------------------------------------------------------------------
+#def get_header_list():
+#        
+#    l = ['hm',
+#         'Station Number',
+#         'Year Month Day Hour Minutes in YYYY,MM,DD,HH24,MI format in Local time',
+#         'Year Month Day Hour Minutes in YYYY,MM,DD,HH24,MI format in Local standard time',
+#         'Precipitation since 9am local time in mm',
+#         'Quality of precipitation since 9am local time',
+#         'Air Temperature in degrees C',
+#         'Quality of air temperature',
+#         'Dew point temperature in degrees C',
+#         'Quality of dew point temperature',
+#         'Relative humidity in percentage %',
+#         'Quality of relative humidity',
+#         'Wind speed in m/s',
+#         'Wind speed quality',
+#         'Wind direction in degrees true',
+#         'Wind direction quality',
+#         'Speed of maximum windgust in last 10 minutes in m/s',
+#         'Quality of speed of maximum windgust in last 10 minutes',
+#         'Station level pressure in hPa',
+#         'Quality of station level pressure',
+#         'AWS Flag',
+#         '#\r\n']
+#         
+#    return [','.join(l)]
 
-## Get info about stations
-#stations_df = get_station_dataframe()
-#
-## Get formatting of data
-#format_df = bomftp.get_data_file_formatting()
-#
-## Get a zipfile containing most recent ftp data
-#z_file = bomftp._get_ftp_data()
-#
-## Make a lookup dict for IDs and server file names
-#data_list = [x for x in z_file.namelist() if 'Data' in x]
-#id_dict = dict(zip([x.split('_')[2] for x in data_list],
-#                   data_list)) 
-#
-#missing_list = []
-#
-## Process each file
-#for station_id in stations_df.index:
-#    
-#    # Get site info
-#    station_df = stations_df.loc[station_id]    
-#    
-#    # Print details to screen
-#    print ('Processing site {0} ({1})'.format(station_id, 
-#                                              station_df['station_name'].rstrip()))
-#    
-#    # Get all the data from the ftp file and make a dataframe
-#    readf_name = id_dict[station_id]
-#    with z_file.open(readf_name) as zf:
-#        ftp_df = zipfile_to_dataframe(zf, station_df)
-#    if not ftp_df: 
-#        missing_list.append(station_id)
-#        continue # Skip to next of no new data
-#
-#    # Write any new data to the existing file - open existing in append+, 
-#    # then make a local dataframe from the existing data (if any)
-#    writef_name = 'HM01X_Data_{}.txt'.format(station_id)    
-#    with open(os.path.join(write_path, writef_name), 'a+') as f:
-#        content = f.readlines()
-#        write_list = get_write_list(content, ftp_df)
-#        f.writelines(write_list)
-#    
-#    # List missing data files    
-#    print ('The ftp files for the following stations had no data:'
-#           .format(station_id, station_df['station_name'].rstrip()))
+#------------------------------------------------------------------------------
