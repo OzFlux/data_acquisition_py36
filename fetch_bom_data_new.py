@@ -23,12 +23,6 @@ import zipfile
 
 import pdb
 
-## Custom modules
-#import BOM_ftp_functions as bomftp
-
-# Reloads
-#importlib.reload(bomftp)
-
 # Configurations
 ftp_server = 'ftp.bom.gov.au'
 ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
@@ -488,6 +482,8 @@ def get_aws_station_details():
             continue
     df.index = df['station_id']
     return df.sort_index()
+#------------------------------------------------------------------------------
+
 #------------------------------------------------------------------------------
 ### END OF STANDALONE FUNCTIONS
 #------------------------------------------------------------------------------
