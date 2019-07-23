@@ -12,6 +12,7 @@ import ftplib
 from io import BytesIO
 import json
 import math
+import numpy as np
 import os
 import pandas as pd
 from pytz import timezone
@@ -268,42 +269,119 @@ class bom_data(object):
 
 #------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
 class bom_data_conversion(object):
     
-    def __init__(self, file_directory):
+    """Converts the raw text files into dataframe and then netCDF 
+       (via xarray)"""
+    
+    def __init__(self, file_directory, stations):
         
         self.file_directory = file_directory
-        self.stations = get_aws_station_details()
+        self.stations = stations #get_aws_station_details()
     
     #--------------------------------------------------------------------------    
     def get_dataframe(self, station_id):
-        
+                
         fname = os.path.join(self.file_directory, 
                              'HM01X_Data_{}.txt'.format(station_id))
-        keep_cols = [12, 14, 16, 18, 20, 22, 26]
+        keep_cols = [12, 14, 16, 18, 20, 22, 24, 26]
         df = pd.read_csv(fname, skiprows = [0])
         new_cols = (df.columns[:7].tolist() + 
                     ['year', 'month', 'day', 'hour', 'minute'] +
                     df.columns[12:].tolist())
         df.columns = new_cols
         df.index = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute']])
-        df = df.iloc[:, keep_cols] 
+        df.index.name = 'time'
+        df = df.iloc[:, keep_cols]
+        for var in df.columns: df[var] = pd.to_numeric(df[var], errors = 'coerce')
+        df.columns = ['Precip', 'Ta', 'Td', 'RH', 'Ws', 'Wd', 'Wg', 'ps']
+        met_funcs = _met_funcs(df)
+        df['q'] = met_funcs.get_q()
+        df['Ah'] = met_funcs.get_Ah()
+        df.ps = df.ps / 10
         return df
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
     def get_dataset(self, station_id):
         
+#        nearest_stations = get_nearest_bom_station(lat, lon, nearest_n = 3)
+#        return nearest_stations
+
+        vars_dict = {'Ah': {'long_name': 'Absolute humidity',
+                            'units': 'g/m3'},
+                     'Precip': {'long_name': 'Precipitation total over time step',
+                                'units': 'mm/30minutes'},
+                     'ps': {'long_name': 'Air pressure',
+                            'units': 'kPa'},
+                     'q': {'long_name': 'Specific humidity',
+                           'units': 'kg/kg'},
+                     'RH': {'long_name': 'Relative humidity',
+                            'units': '%'},
+                     'Ta': {'long_name': 'Air temperature',
+                            'units': 'C'},
+                     'Td': {'long_name': 'Dew point temperature',
+                            'units': 'C'},
+                     'Wd': {'long_name': 'Wind direction',
+                            'units': 'degT'},
+                     'Ws': {'long_name': 'Wind speed',
+                            'units': 'm/s'},
+                     'Wg': {'long_name': 'Wind gust',
+                            'units': 'm/s'}}
+                     
+        generic_dict = {'instrument': '', 'valid_range': '-1e+35,1e+35',
+                        'missing_value': '-9999', 'height': '', 
+                        'standard_name': '', 'group_name': '', 
+                        'serial_number': ''}
+        
+        site_dict = {'bom_name': self.stations.loc[station_id, 'station_name'], 
+                     'bom_id': self.stations.loc[station_id, 'station_id']}
+        
         df = self.get_dataframe(station_id)
-        df.columns = [x.replace('m/s', 'm s-1') for x in df.columns.tolist()]        
         global_attrs = {'station_name': self.stations.loc[station_id, 'station_name'],
                         'state': self.stations.loc[station_id, 'State'],
                         'elevation (m)': self.stations.loc[station_id, 'height_stn_asl'],
                         'latitude': self.stations.loc[station_id, 'lat'],
                         'longitude': self.stations.loc[station_id, 'lon']}
         dataset = df.to_xarray()
+        for var in df.columns:
+            dataset[var].attrs = {**vars_dict[var], **generic_dict, **site_dict}
         dataset.attrs = global_attrs
+        dataset.time.encoding['units'] = 'days since 1800-01-01'
         return dataset
+    #--------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+class _met_funcs(object):
+    
+    """Simple meteorological conversions"""
+    
+    def __init__(self, df):
+        
+        self.df = df
+    
+    #--------------------------------------------------------------------------
+    def get_Ah(self): return (self.get_e() * 10**3 / 
+                              ((self.df.Ta + 273.15) * 8.3143 / 18))
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def get_es(self): return (0.6106 * np.exp(17.27 * self.df.Ta / 
+                              (self.df.Ta + 237.3)))
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def get_e(self): return self.get_es() * self.df.RH / 100
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def get_q(self): 
+        Md = 0.02897   # molecular weight of dry air, kg/mol
+        Mv = 0.01802   # molecular weight of water vapour, kg/mol    
+        return Mv / Md * (0.01 * self.df.RH * self.get_es() / (self.df.ps / 10))
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -336,6 +414,7 @@ def get_aws_station_details(with_timezone = False):
         except ValueError:
             continue
     df.index = df['station_id']
+    df['station_name'] = [x.rstrip() for x in df.station_name]
     if with_timezone:
         df['timezone'] = [get_timezone(df.loc[idx, 'lat'], df.loc[idx, 'lon']) 
                           for idx in df.index]
@@ -536,10 +615,13 @@ def haversine(lat1, lon1, lat2, lon2):
 
 if __name__ == "__main__":
 
+    #--------------------------------------------------------------------------
     # Local configurations
     aws_file_path = '/home/ian/Desktop/BOM_data'
     site_master_path = '/home/ian/Temp/site_master.xls'
+    #--------------------------------------------------------------------------
     
+    #--------------------------------------------------------------------------
     def get_ozflux_site_list(master_file_path):
     
         wb = xlrd.open_workbook(master_file_path)
@@ -553,12 +635,17 @@ if __name__ == "__main__":
         df.index = df[header_list[0]]
         df.drop(header_list[0], axis = 1, inplace = True)
         return df
+    #--------------------------------------------------------------------------
+
+    sites = get_ozflux_site_list(site_master_path)
+    x = bom_data_conversion(aws_file_path)
+    site_name = sites.index[0]
+    a = x.get_dataset(sites.loc[site_name, 'Latitude'], 
+                      sites.loc[site_name, 'Longitude'])
         
 #    x = bom_data()
 #    
 #    x.write_to_text_file(aws_file_path)
-    
-    sites = get_ozflux_site_list(site_master_path)
     
 #------------------------------------------------------------------------------
 #def get_header_list():
