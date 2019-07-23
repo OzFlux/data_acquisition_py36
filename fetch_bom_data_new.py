@@ -19,23 +19,31 @@ from pytz.exceptions import UnknownTimeZoneError
 import requests
 from time import sleep
 from timezonefinder import TimezoneFinder as tzf
+import xarray as xr
+import xlrd
 import zipfile
 
 import pdb
 
-# Configurations
+#------------------------------------------------------------------------------
+### Remote configurations ###
+#------------------------------------------------------------------------------
 ftp_server = 'ftp.bom.gov.au'
 ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
-
-#------------------------------------------------------------------------------
-### BEGINNING OF CLASS
 #------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
+### BEGINNING OF CLASS SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 class bom_data(object):
     
     def __init__(self):
         
-        self.stations = self.get_station_dataframe()
+        self.stations = get_aws_station_details(with_timezone = True)
         self.file_format = get_data_file_formatting()
         self._zfile, self._empty_files = get_ftp_data(list_missing = True)
 
@@ -61,7 +69,7 @@ class bom_data(object):
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def generate_dummy_line(self, station_id, datetime):
+    def _generate_dummy_line(self, station_id, datetime):
     
         """Write out a line of dummy data with correct spacing and site 
            details, but no met data"""
@@ -86,7 +94,8 @@ class bom_data(object):
     #------------------------------------------------------------------------------
     def get_dataframe(self, station_id):
     
-        """Convert zipfile read from ftp site to dataframe with dummy spaces"""
+        """Convert zipfile read from ftp site to dataframe (just index and 
+           data string) with dummy spaces"""
         
         readfile_name = self.get_file_id_dict()[station_id]
         header_line = 0
@@ -104,7 +113,7 @@ class bom_data(object):
         new_index = pd.date_range(valid_df.index[0], valid_df.index[-1], freq = '30T')
         missing_dates = [x.to_pydatetime() for x in new_index 
                          if not x in valid_df.index]
-        dummy_data = [self.generate_dummy_line(station_id, x) 
+        dummy_data = [self._generate_dummy_line(station_id, x) 
                       for x in missing_dates]
         dummy_df = pd.DataFrame(dummy_data, index = missing_dates, columns = ['Data'])
         df = pd.concat([valid_df, dummy_df])
@@ -145,7 +154,7 @@ class bom_data(object):
         
         headers = self.file_format.Description.tolist()
         new_headers = headers[:2] + headers[3:9] + headers[11:]
-        new_headers[0] = new_headers[0].split('-')[1].lstrip()
+        new_headers[0] = new_headers[0].split('-')[0].rstrip()
         new_headers[1] = 'Station Number'
         new_headers[12] = new_headers[12].replace('km/h', 'm/s')
         new_headers[14] += ' true'
@@ -167,49 +176,7 @@ class bom_data(object):
         except:
             dst_offset = tz_obj.dst(dt_obj + dt.timedelta(seconds = 3600))
         return dt_obj + dst_offset 
-    #------------------------------------------------------------------------------
-
-    #------------------------------------------------------------------------------
-    def get_sitename_from_ID(self, ID):
-        
-        return self.stations.loc[ID, 'station_name'].rstrip()
-    #------------------------------------------------------------------------------
-
-    #------------------------------------------------------------------------------
-    def get_station_dataframe(self):
-        
-        """Get the station details from the BOM ftp server and add timezone info"""
-        
-        def make_tz_request(lat, lon):
-        
-            api_key = 'UT66CKBKU8MM'
-            base_url_str = 'http://api.timezonedb.com/v2.1/get-time-zone'
-            end_str = ('?key={0}&format=json&by=position&lat={1}&lng={2}'
-                       .format(api_key, lat, lon))
-            sleep(1)
-            json_obj = requests.get(base_url_str + end_str)
-            if json_obj.status_code == 200:
-                return json.loads(json_obj.content)
-            else: 
-                print ('Timezone request returned status code {}'
-                       .format(json_obj.status_code))
-        
-        # Get basic station data
-        stations_df = get_aws_station_details()
-    
-        # Create a timezone variable using lookup from python package
-        stations_df['timezone'] = [tzf().timezone_at(lng = stations_df.loc[x, 'lon'], 
-                                                     lat = stations_df.loc[x, 'lat']) 
-                                   for x in stations_df.index]
-        
-        # Fill any timezones not captured by python package using web API
-        for id_code in stations_df[pd.isnull(stations_df.timezone)].index:
-            rq = make_tz_request(stations_df.loc[id_code, 'lat'], 
-                                 stations_df.loc[id_code, 'lon'])
-            stations_df.loc[id_code, 'timezone'] = rq['zoneName']
-    
-        return stations_df
-    #------------------------------------------------------------------------------
+    #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def _get_write_list(self, station_id, file_dir):
@@ -248,7 +215,7 @@ class bom_data(object):
             date_range = (pd.date_range(last_date, ftp_content.index[0], 
                                         freq = '30T')
                           .to_pydatetime())[1:-1]
-            write_list = [self.generate_dummy_line(station_id, x) 
+            write_list = [self._generate_dummy_line(station_id, x) 
                           for x in date_range] + ftp_content.Data.tolist()
         return write_list
     #------------------------------------------------------------------------------
@@ -260,7 +227,7 @@ class bom_data(object):
         
         id_list = sorted([x.split('_')[2] for x in self._empty_files])
         if not station_names: return id_list
-        return list(zip(id_list, [x.stations.loc[i, 'station_name'].rstrip() 
+        return list(zip(id_list, [self.stations.loc[i, 'station_name'].rstrip() 
                                   for i in id_list]))
     #--------------------------------------------------------------------------
 
@@ -297,12 +264,82 @@ class bom_data(object):
             if not data_to_write: continue
             with open(local_filepath, 'a+') as f:                
                 f.writelines(data_to_write)
+    #--------------------------------------------------------------------------                
+
 #------------------------------------------------------------------------------
-### END OF CLASS
+
+class bom_data_conversion(object):
+    
+    def __init__(self, file_directory):
+        
+        self.file_directory = file_directory
+        self.stations = get_aws_station_details()
+    
+    #--------------------------------------------------------------------------    
+    def get_dataframe(self, station_id):
+        
+        fname = os.path.join(self.file_directory, 
+                             'HM01X_Data_{}.txt'.format(station_id))
+        keep_cols = [12, 14, 16, 18, 20, 22, 26]
+        df = pd.read_csv(fname, skiprows = [0])
+        new_cols = (df.columns[:7].tolist() + 
+                    ['year', 'month', 'day', 'hour', 'minute'] +
+                    df.columns[12:].tolist())
+        df.columns = new_cols
+        df.index = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute']])
+        df = df.iloc[:, keep_cols] 
+        return df
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def get_dataset(self, station_id):
+        
+        df = self.get_dataframe(station_id)
+        df.columns = [x.replace('m/s', 'm s-1') for x in df.columns.tolist()]        
+        global_attrs = {'station_name': self.stations.loc[station_id, 'station_name'],
+                        'state': self.stations.loc[station_id, 'State'],
+                        'elevation (m)': self.stations.loc[station_id, 'height_stn_asl'],
+                        'latitude': self.stations.loc[station_id, 'lat'],
+                        'longitude': self.stations.loc[station_id, 'lon']}
+        dataset = df.to_xarray()
+        dataset.attrs = global_attrs
+        return dataset
+    #--------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+        
+#------------------------------------------------------------------------------
+### END OF CLASS SECTION ###
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-### BEGINNING OF STANDALONE FUNCTIONS
+### BEGINNING OF STANDALONE FUNCTIONS ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def get_aws_station_details(with_timezone = False):
+    
+    """Retrieves a dataframe containing details of all AWS stations on the 
+       OzFlux ftp server site"""
+       
+    zf = get_ftp_data(['StnDet'], get_first = False)
+    data_list = []
+    for f in zf.namelist():
+        with zf.open(f) as file_obj:
+            for line in file_obj:
+                data_list += [line.decode().split(',')]
+    notes_df = get_station_details_formatting()
+    df = pd.DataFrame(data_list, columns = notes_df.Description)
+    for col in [x for x in df.columns if not 'station_id' in x]:
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except ValueError:
+            continue
+    df.index = df['station_id']
+    if with_timezone:
+        df['timezone'] = [get_timezone(df.loc[idx, 'lat'], df.loc[idx, 'lon']) 
+                          for idx in df.index]
+    return df.sort_index()
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -439,6 +476,34 @@ def get_station_details_formatting(truncate_description = True):
                          byte_length[0]: byte_length[1:],
                          desc[0]: desc[1:]})
 #------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def get_timezone(lat, lon):
+    
+    """Get timezone for coordinates"""
+    
+    def make_tz_request(lat, lon):
+    
+        api_key = 'UT66CKBKU8MM'
+        base_url_str = 'http://api.timezonedb.com/v2.1/get-time-zone'
+        end_str = ('?key={0}&format=json&by=position&lat={1}&lng={2}'
+                   .format(api_key, lat, lon))
+        sleep(1)
+        json_obj = requests.get(base_url_str + end_str)
+        if json_obj.status_code == 200:
+            return json.loads(json_obj.content)
+        else: 
+            print ('Timezone request returned status code {}'
+                   .format(json_obj.status_code))
+    
+    # Create a timezone variable using lookup from python package, fall back
+    # on API
+    tz = tzf().timezone_at(lng = lon, lat = lat)
+    if tz: return tz
+    tz = make_tz_request(lat, lon)['zoneName']
+    if tz: return tz
+    return None
+#------------------------------------------------------------------------------
     
 #------------------------------------------------------------------------------
 def haversine(lat1, lon1, lat2, lon2):
@@ -462,29 +527,6 @@ def haversine(lat1, lon1, lat2, lon2):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_aws_station_details():
-    
-    """Retrieves a dataframe containing details of all AWS stations on the 
-       OzFlux ftp server site"""
-       
-    zf = get_ftp_data(['StnDet'], get_first = False)
-    data_list = []
-    for f in zf.namelist():
-        with zf.open(f) as file_obj:
-            for line in file_obj:
-                data_list += [line.decode().split(',')]
-    notes_df = get_station_details_formatting()
-    df = pd.DataFrame(data_list, columns = notes_df.Description)
-    for col in [x for x in df.columns if not 'station_id' in x]:
-        try:
-            df[col] = pd.to_numeric(df[col])
-        except ValueError:
-            continue
-    df.index = df['station_id']
-    return df.sort_index()
-#------------------------------------------------------------------------------
-
-#------------------------------------------------------------------------------
 ### END OF STANDALONE FUNCTIONS
 #------------------------------------------------------------------------------
 
@@ -494,10 +536,29 @@ def get_aws_station_details():
 
 if __name__ == "__main__":
 
-    # Set path to read existing and write new data
-    write_path = '/home/ian/Desktop/BOM_data' #'/rdsi/market/AWS_BOM_all'
+    # Local configurations
+    aws_file_path = '/home/ian/Desktop/BOM_data'
+    site_master_path = '/home/ian/Temp/site_master.xls'
     
-    x = bom_data()
+    def get_ozflux_site_list(master_file_path):
+    
+        wb = xlrd.open_workbook(master_file_path)
+        sheet = wb.sheet_by_name('Active')
+        header_row = 9
+        header_list = sheet.row_values(header_row)
+        df = pd.DataFrame()
+        for var in ['Site', 'Latitude', 'Longitude']:
+            index_val = header_list.index(var)
+            df[var] = sheet.col_values(index_val, header_row + 1)   
+        df.index = df[header_list[0]]
+        df.drop(header_list[0], axis = 1, inplace = True)
+        return df
+        
+#    x = bom_data()
+#    
+#    x.write_to_text_file(aws_file_path)
+    
+    sites = get_ozflux_site_list(site_master_path)
     
 #------------------------------------------------------------------------------
 #def get_header_list():
