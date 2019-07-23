@@ -275,10 +275,11 @@ class bom_data_conversion(object):
     """Converts the raw text files into dataframe and then netCDF 
        (via xarray)"""
     
-    def __init__(self, file_directory, stations):
+    def __init__(self, file_directory, stations, ozflux_sites):
         
         self.file_directory = file_directory
         self.stations = stations #get_aws_station_details()
+        self.ozflux_sites = ozflux_sites
     
     #--------------------------------------------------------------------------    
     def get_dataframe(self, station_id):
@@ -304,10 +305,15 @@ class bom_data_conversion(object):
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
-    def get_dataset(self, station_id):
+    def get_dataset(self, site_name):
         
-#        nearest_stations = get_nearest_bom_station(lat, lon, nearest_n = 3)
-#        return nearest_stations
+        ### This may fail because all stations get returned in the stations list
+        ### but some have no data on the ftp site - to fix
+        
+        lat = self.ozflux_sites.loc[site_name, 'lat']
+        lon = self.ozflux_sites.loc[site_name, 'lon']
+        
+        nearest_stations = get_nearest_bom_station(lat, lon, nearest_n = 3)
 
         vars_dict = {'Ah': {'long_name': 'Absolute humidity',
                             'units': 'g/m3'},
@@ -335,19 +341,27 @@ class bom_data_conversion(object):
                         'standard_name': '', 'group_name': '', 
                         'serial_number': ''}
         
-        site_dict = {'bom_name': self.stations.loc[station_id, 'station_name'], 
-                     'bom_id': self.stations.loc[station_id, 'station_id']}
-        
-        df = self.get_dataframe(station_id)
-        global_attrs = {'station_name': self.stations.loc[station_id, 'station_name'],
-                        'state': self.stations.loc[station_id, 'State'],
-                        'elevation (m)': self.stations.loc[station_id, 'height_stn_asl'],
-                        'latitude': self.stations.loc[station_id, 'lat'],
-                        'longitude': self.stations.loc[station_id, 'lon']}
+        df_list = []
+        for i, station_id in enumerate(nearest_stations.index):
+            sub_df = self.get_dataframe(station_id)
+            sub_df.columns = ['{}_{}'.format(x, str(i)) for x in sub_df.columns]
+            df_list.append(sub_df)
+        df = pd.concat(df_list, axis = 1)
+#        global_attrs = {'station_name': self.stations.loc[station_id, 'station_name'],
+#                        'state': self.stations.loc[station_id, 'State'],
+#                        'elevation (m)': self.stations.loc[station_id, 'height_stn_asl'],
+#                        'latitude': self.stations.loc[station_id, 'lat'],
+#                        'longitude': self.stations.loc[station_id, 'lon']}
         dataset = df.to_xarray()
         for var in df.columns:
-            dataset[var].attrs = {**vars_dict[var], **generic_dict, **site_dict}
-        dataset.attrs = global_attrs
+            l = var.split('_')
+            var, idx = l[0], int(l[1])
+            var_specific_dict = vars_dict[var]
+            bomsite_specific_dict = {'bom_name': nearest_stations.iloc[idx, 'station_name'],
+                                     'bom_id': nearest_stations.index[1]}
+            dataset[var].attrs = {**var_specific_dict, **bomsite_specific_dict, 
+                                  **generic_dict}        
+#        dataset.attrs = global_attrs
         dataset.time.encoding['units'] = 'days since 1800-01-01'
         return dataset
     #--------------------------------------------------------------------------
@@ -638,10 +652,10 @@ if __name__ == "__main__":
     #--------------------------------------------------------------------------
 
     sites = get_ozflux_site_list(site_master_path)
-    x = bom_data_conversion(aws_file_path)
-    site_name = sites.index[0]
-    a = x.get_dataset(sites.loc[site_name, 'Latitude'], 
-                      sites.loc[site_name, 'Longitude'])
+#    x = bom_data_conversion(aws_file_path)
+#    site_name = sites.index[0]
+#    a = x.get_dataset(sites.loc[site_name, 'Latitude'], 
+#                      sites.loc[site_name, 'Longitude'])
         
 #    x = bom_data()
 #    
