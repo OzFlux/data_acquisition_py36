@@ -20,7 +20,6 @@ from pytz.exceptions import UnknownTimeZoneError
 import requests
 from time import sleep
 from timezonefinder import TimezoneFinder as tzf
-import xarray as xr
 import xlrd
 import zipfile
 
@@ -29,14 +28,21 @@ import pdb
 #------------------------------------------------------------------------------
 ### Remote configurations ###
 #------------------------------------------------------------------------------
+
 ftp_server = 'ftp.bom.gov.au'
 ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
+
+#------------------------------------------------------------------------------
+### Local configurations ###
+#------------------------------------------------------------------------------
+
+aws_file_path = '/home/ian/Desktop/BOM_data'
+master_file_path = '/home/ian/Temp/site_master.xls'
+
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF CLASS SECTION ###
-#------------------------------------------------------------------------------
-
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -253,6 +259,8 @@ class bom_data(object):
     #--------------------------------------------------------------------------
     def write_to_text_file(self, write_path, station_id = None):
         
+        """Write data to text file (append only new data if file exists)"""
+        
         if station_id:
             station_list = [station_id]
         else:
@@ -270,16 +278,16 @@ class bom_data(object):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-class bom_data_conversion(object):
+class bom_data_converter(object):
     
-    """Converts the raw text files into dataframe and then netCDF 
-       (via xarray)"""
+    """Converts the raw text files into dataframe, xarray Dataset and 
+       netCDF"""
     
-    def __init__(self, file_directory, stations, ozflux_sites):
+    def __init__(self):
         
-        self.file_directory = file_directory
-        self.stations = stations #get_aws_station_details()
-        self.ozflux_sites = ozflux_sites
+        self.file_directory = aws_file_path
+        self.stations = get_aws_station_details()
+        self.ozflux_sites = get_ozflux_site_list(master_file_path)
     
     #--------------------------------------------------------------------------    
     def get_dataframe(self, station_id):
@@ -305,16 +313,68 @@ class bom_data_conversion(object):
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
-    def get_dataset(self, site_name):
+    def get_dataset(self, site_name, downsample = False):
+        
+        """Collate data from individual BOM sites in xarray dataset"""
         
         ### This may fail because all stations get returned in the stations list
         ### but some have no data on the ftp site - to fix
         
-        lat = self.ozflux_sites.loc[site_name, 'lat']
-        lon = self.ozflux_sites.loc[site_name, 'lon']
+        # Find closest stations
+        lat = self.ozflux_sites.loc[site_name, 'Latitude']
+        lon = self.ozflux_sites.loc[site_name, 'Longitude']
+        nearest_stations = get_nearest_bom_station(lat, lon, 
+                                                   stations = self.stations, 
+                                                   nearest_n = 3)
         
-        nearest_stations = get_nearest_bom_station(lat, lon, nearest_n = 3)
+        # Get the dataframes for each BOM AWS site and concatenate
+        df_list = []
+        for i, station_id in enumerate(nearest_stations.index):
+            if downsample: sub_df = self.get_downsampled_dataframe(station_id)
+            else: sub_df = self.get_dataframe(station_id)
+            sub_df.columns = ['{}_{}'.format(x, str(i)) for x in sub_df.columns]
+            df_list.append(sub_df)
+        df = pd.concat(df_list, axis = 1)
+        dataset = df.to_xarray()
 
+        # Generate variable attribute dictionaries and write to xarray dataset
+        for var in df.columns:
+            dataset[var].attrs = self._get_var_attrs(var, nearest_stations)
+        
+        # Generate global attribute dictionaries and write to xarray dataset
+        dataset.attrs = self._get_global_attrs(site_name, df)
+        
+        # Set encoding (note should be able to assign a dict to dataset.encoding 
+        # rather than iterating over vars but doesn't seem to work)
+        dataset.time.encoding = {'units': 'days since 1800-01-01',
+                                 '_FillValue': None}
+        for var in dataset.data_vars:
+            dataset[var].encoding = {'_FillValue': None}
+        return dataset
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def _get_global_attrs(self, site_name, df):
+
+        """Make a dictionary of global attributes"""
+        
+        start_date = dt.datetime.strftime(df.index[0], '%Y-%m-%d %H:%M:%S')
+        end_date = dt.datetime.strftime(df.index[-1], '%Y-%m-%d %H:%M:%S')
+        run_datetime = dt.datetime.strftime(dt.datetime.now(), 
+                                            '%Y-%m-%d %H:%M:%S')
+        return {'latitude': str(round(self.ozflux_sites.loc[site_name, 'Latitude'], 4)),
+                'longitude': str(round(self.ozflux_sites.loc[site_name, 'Longitude'], 4)),
+                'site_name': site_name, 'start_date': start_date,
+                'end_date': end_date, 'nc_nrecs': str(len(df)),
+                'nc_rundatetime': run_datetime,
+                'time_step': '30', 'xl_datemode': '0'}
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def _get_var_attrs(self, var, nearest_stations):
+        
+        """Make a dictionary of attributes for passed variable"""
+        
         vars_dict = {'Ah': {'long_name': 'Absolute humidity',
                             'units': 'g/m3'},
                      'Precip': {'long_name': 'Precipitation total over time step',
@@ -336,34 +396,49 @@ class bom_data_conversion(object):
                      'Wg': {'long_name': 'Wind gust',
                             'units': 'm/s'}}
                      
-        generic_dict = {'instrument': '', 'valid_range': '-1e+35,1e+35',
-                        'missing_value': '-9999', 'height': '', 
+        generic_dict = {'instrument': '', 'valid_range': (-1e+35,1e+35),
+                        'missing_value': -9999, 'height': '', 
                         'standard_name': '', 'group_name': '', 
                         'serial_number': ''}
+
+        l = var.split('_')
+        var, idx = l[0], int(l[1])
+        var_specific_dict = vars_dict[var]
+        bomsite_specific_dict = {'bom_name': nearest_stations.iloc[idx].station_name,
+                                 'bom_id': nearest_stations.index[idx],
+                                 'bom_dist (km)': str(nearest_stations.iloc[idx]['dist (km)'])}
+        return {**var_specific_dict, **bomsite_specific_dict, **generic_dict}
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def get_downsampled_dataframe(self, station_id):
         
-        df_list = []
-        for i, station_id in enumerate(nearest_stations.index):
-            sub_df = self.get_dataframe(station_id)
-            sub_df.columns = ['{}_{}'.format(x, str(i)) for x in sub_df.columns]
-            df_list.append(sub_df)
-        df = pd.concat(df_list, axis = 1)
-#        global_attrs = {'station_name': self.stations.loc[station_id, 'station_name'],
-#                        'state': self.stations.loc[station_id, 'State'],
-#                        'elevation (m)': self.stations.loc[station_id, 'height_stn_asl'],
-#                        'latitude': self.stations.loc[station_id, 'lat'],
-#                        'longitude': self.stations.loc[station_id, 'lon']}
-        dataset = df.to_xarray()
-        for var in df.columns:
-            l = var.split('_')
-            var, idx = l[0], int(l[1])
-            var_specific_dict = vars_dict[var]
-            bomsite_specific_dict = {'bom_name': nearest_stations.iloc[idx, 'station_name'],
-                                     'bom_id': nearest_stations.index[1]}
-            dataset[var].attrs = {**var_specific_dict, **bomsite_specific_dict, 
-                                  **generic_dict}        
-#        dataset.attrs = global_attrs
-        dataset.time.encoding['units'] = 'days since 1800-01-01'
-        return dataset
+        """Downsample to 1 hour"""
+        
+        df = self.get_dataframe(station_id)
+        met_funcs = _met_funcs(df)
+        df['u'], df['v'] = met_funcs.get_uv_from_wswd()
+        df.index = df.index + dt.timedelta(minutes = 30)
+        rain_series = df['Precip']
+        gust_series = df['Wg']
+        df.drop(['Precip', 'Wd', 'Wg', 'Ws'], axis = 1, inplace = True)
+        downsample_df = df.resample('60T').mean()
+        met_funcs = _met_funcs(downsample_df)
+        downsample_df['Ws'], downsample_df['Wd'] = met_funcs.get_wswd_from_uv()
+        downsample_df.drop(['u', 'v'], axis = 1, inplace = True)
+        downsample_df['Precip'] = rain_series.resample('60T').sum()
+        downsample_df['Wg'] = gust_series.resample('60T').max()
+        return downsample_df
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def write_to_netcdf(self, site_name, write_path, downsample = False):
+        
+        print ('Writing netCDF file for site {}'.format(site_name))
+        dataset = self.get_dataset(site_name, downsample = downsample)
+        fname = '{}_AWS.nc'.format(''.join(site_name.split(' ')))
+        target = os.path.join(write_path, fname)
+        dataset.to_netcdf(target, format='NETCDF4')
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -396,6 +471,33 @@ class _met_funcs(object):
         Md = 0.02897   # molecular weight of dry air, kg/mol
         Mv = 0.01802   # molecular weight of water vapour, kg/mol    
         return Mv / Md * (0.01 * self.df.RH * self.get_es() / (self.df.ps / 10))
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def _us_to_from_compass(self, dctn):
+        bool_idx = dctn > 90
+        dctn.loc[bool_idx] = 450 - dctn.loc[bool_idx]
+        dctn.loc[~bool_idx] = 90 - dctn.loc[~bool_idx]
+        return dctn
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def get_uv_from_wswd(self):
+        
+        us_wd = self._us_to_from_compass(self.df.Wd)
+        u = self.df.Ws * np.cos(np.radians(us_wd))
+        v = self.df.Ws * np.sin(np.radians(us_wd))
+        return u, v
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def get_wswd_from_uv(self):
+    
+        ws = np.sqrt(self.df.u**2 + self.df.v**2)
+        wd = np.degrees(np.arctan2(self.df.v, self.df.u))
+        bool_idx = wd < 0
+        wd.loc[bool_idx] = wd.loc[bool_idx] + 360
+        return ws, self._us_to_from_compass(wd)
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -521,12 +623,13 @@ def get_ftp_data(search_list = None, get_first = True, list_missing = False):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_nearest_bom_station(lat, lon, current = True, nearest_n = 5):
+def get_nearest_bom_station(lat, lon, stations = None, current = True, 
+                            nearest_n = 5):
     
     """Uses haversine formula to estimate distance from given coordinates
        to nearest x stations"""
     
-    stations = get_aws_station_details()
+    if stations is None: stations = get_aws_station_details()
     stations['dist (km)'] = list(map(lambda x: haversine(lat, lon, 
                                                          stations.loc[x, 'lat'], 
                                                          stations.loc[x, 'lon']),
@@ -568,6 +671,22 @@ def get_station_details_formatting(truncate_description = True):
     return pd.DataFrame({byte_start[0]: byte_start[1:],
                          byte_length[0]: byte_length[1:],
                          desc[0]: desc[1:]})
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def get_ozflux_site_list(master_file_path):
+
+    wb = xlrd.open_workbook(master_file_path)
+    sheet = wb.sheet_by_name('Active')
+    header_row = 9
+    header_list = sheet.row_values(header_row)
+    df = pd.DataFrame()
+    for var in ['Site', 'Latitude', 'Longitude', 'Time step']:
+        index_val = header_list.index(var)
+        df[var] = sheet.col_values(index_val, header_row + 1)   
+    df.index = df[header_list[0]]
+    df.drop(header_list[0], axis = 1, inplace = True)
+    return df
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -629,30 +748,21 @@ def haversine(lat1, lon1, lat2, lon2):
 
 if __name__ == "__main__":
 
-    #--------------------------------------------------------------------------
-    # Local configurations
-    aws_file_path = '/home/ian/Desktop/BOM_data'
-    site_master_path = '/home/ian/Temp/site_master.xls'
-    #--------------------------------------------------------------------------
-    
-    #--------------------------------------------------------------------------
-    def get_ozflux_site_list(master_file_path):
-    
-        wb = xlrd.open_workbook(master_file_path)
-        sheet = wb.sheet_by_name('Active')
-        header_row = 9
-        header_list = sheet.row_values(header_row)
-        df = pd.DataFrame()
-        for var in ['Site', 'Latitude', 'Longitude']:
-            index_val = header_list.index(var)
-            df[var] = sheet.col_values(index_val, header_row + 1)   
-        df.index = df[header_list[0]]
-        df.drop(header_list[0], axis = 1, inplace = True)
-        return df
-    #--------------------------------------------------------------------------
+    # Get BOM data class and write ftp data to text file    
+    aws = bom_data()
+    aws.write_to_text_file(aws_file_path)
 
-    sites = get_ozflux_site_list(site_master_path)
-#    x = bom_data_conversion(aws_file_path)
+    # Get conversion class and write text data to nc file
+#    nc_path = '/home/ian/Desktop/Ozflux_nc'
+#    conv_class = bom_data_converter()
+#    site_list = list(conv_class.ozflux_sites.index)
+#    for site in site_list:
+#        if conv_class.ozflux_sites.loc[site, 'Time step'] == 30: 
+#            downsample = False
+#        else:
+#            downsample = True
+#        conv_class.write_to_netcdf(site, nc_path, downsample)
+        
 #    site_name = sites.index[0]
 #    a = x.get_dataset(sites.loc[site_name, 'Latitude'], 
 #                      sites.loc[site_name, 'Longitude'])
@@ -690,3 +800,22 @@ if __name__ == "__main__":
 #    return [','.join(l)]
 
 #------------------------------------------------------------------------------
+
+##------------------------------------------------------------------------------
+#def get_ftp_files():
+#    
+#    ftp = ftplib.FTP(ftp_server)
+#    ftp.login()
+#    zip_file_list = [os.path.split(f)[1] for f in ftp.nlst(ftp_dir)]
+#    d = {}
+#    for fname in zip_file_list:
+#        in_file = os.path.join(ftp_dir, fname)    
+#        f_str = 'RETR {0}'.format(in_file)
+#        bio = BytesIO()
+#        ftp.retrbinary(f_str, bio.write)
+#        bio.seek(0)
+#        zf = zipfile.ZipFile(bio)
+#        d[fname] = zf.namelist()
+#        zf.close()
+#    return d
+##------------------------------------------------------------------------------
