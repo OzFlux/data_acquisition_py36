@@ -47,8 +47,12 @@ def get_dates(data):
     
     dates = []
     for line in data:
-        dates.append(dt.datetime.strptime(''.join(line.split(',')[7:12]), 
-                                          '%Y%m%d%H%M'))
+        try:
+            dates.append(dt.datetime.strptime((''.join(line.split(',')[7:12]).strip()), 
+                                             '%Y%m%d%H%M'))
+        except ValueError:
+            pdb.set_trace()
+            
     return dates
 
 def get_dataframe(read_path, header_lines):
@@ -62,15 +66,15 @@ def get_dataframe(read_path, header_lines):
         return df, header
 
 old_header_lines = 1
-new_header_lines = 2
-old_path = '/home/ian/Desktop/AWS_BOM_all'
-new_path = '/home/ian/Desktop/BOM_data/'
-output_path = '/home/ian/Desktop/BOM_new'
+new_header_lines = 1
+old_path = '/rdsi/market/CloudStor/Shared/AWS_BOM_all'
+new_path = '/rdsi/market/CloudStor/Shared/BOM_new'
+output_path = '/rdsi/market/CloudStor/Shared/Collated'
 
 old_file_list = sorted(os.listdir(old_path))
 new_file_list = sorted(os.listdir(new_path))
 
-for fname in old_file_list:
+for fname in old_file_list[400:]:
     
     print ('Processing file {}'.format(fname))
     
@@ -93,6 +97,6 @@ for fname in old_file_list:
     
     with open(write_path, 'w') as f:
         
-        f.write(new_header[1])
+        f.write(new_header[0])
         data = combined_df.data.tolist()
         f.writelines(data)

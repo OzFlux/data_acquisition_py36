@@ -36,8 +36,8 @@ ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-aws_file_path = '/home/ian/Desktop/BOM_data'
-master_file_path = '/home/ian/Temp/site_master.xls'
+aws_file_path = '/rdsi/market/CloudStor/Shared/Collated'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
 
@@ -46,7 +46,7 @@ master_file_path = '/home/ian/Temp/site_master.xls'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-class bom_data(object):
+class bom_data_getter(object):
     
     def __init__(self):
         
@@ -746,31 +746,25 @@ def haversine(lat1, lon1, lat2, lon2):
 ### MAIN PROGRAM
 #------------------------------------------------------------------------------
 
+#------------------------------------------------------------------------------
 if __name__ == "__main__":
 
     # Get BOM data class and write ftp data to text file    
-    aws = bom_data()
+    aws = bom_data_getter()
     aws.write_to_text_file(aws_file_path)
 
     # Get conversion class and write text data to nc file
-#    nc_path = '/home/ian/Desktop/Ozflux_nc'
-#    conv_class = bom_data_converter()
-#    site_list = list(conv_class.ozflux_sites.index)
-#    for site in site_list:
-#        if conv_class.ozflux_sites.loc[site, 'Time step'] == 30: 
-#            downsample = False
-#        else:
-#            downsample = True
-#        conv_class.write_to_netcdf(site, nc_path, downsample)
+    nc_path = '/home/ian/Desktop/Ozflux_nc'
+    conv_class = bom_data_converter()
+    site_list = list(conv_class.ozflux_sites.index)
+    for site in site_list:
+        if conv_class.ozflux_sites.loc[site, 'Time step'] == 30: 
+            downsample = False
+        else:
+            downsample = True
+        conv_class.write_to_netcdf(site, nc_path, downsample)
+#------------------------------------------------------------------------------
         
-#    site_name = sites.index[0]
-#    a = x.get_dataset(sites.loc[site_name, 'Latitude'], 
-#                      sites.loc[site_name, 'Longitude'])
-        
-#    x = bom_data()
-#    
-#    x.write_to_text_file(aws_file_path)
-    
 #------------------------------------------------------------------------------
 #def get_header_list():
 #        
