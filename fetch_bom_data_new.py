@@ -295,7 +295,7 @@ class bom_data_converter(object):
         fname = os.path.join(self.file_directory, 
                              'HM01X_Data_{}.txt'.format(station_id))
         keep_cols = [12, 14, 16, 18, 20, 22, 24, 26]
-        df = pd.read_csv(fname, skiprows = [0])
+        df = pd.read_csv(fname, skiprows = [0], low_memory = False)
         new_cols = (df.columns[:7].tolist() + 
                     ['year', 'month', 'day', 'hour', 'minute'] +
                     df.columns[12:].tolist())
