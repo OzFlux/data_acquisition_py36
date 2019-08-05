@@ -321,11 +321,15 @@ class bom_data_converter(object):
         ### but some have no data on the ftp site - to fix
         
         # Find closest stations
+        start_year = self.ozflux_sites.loc[site_name, 'Start year']
         lat = self.ozflux_sites.loc[site_name, 'Latitude']
         lon = self.ozflux_sites.loc[site_name, 'Longitude']
         nearest_stations = get_nearest_bom_station(lat, lon, 
                                                    stations = self.stations, 
-                                                   nearest_n = 3)
+                                                   nearest_n = 10)
+        nearest_stations['year_opened'] = list(map(lambda x: int(x.split('/')[-1]), 
+                                                   nearest_stations.month_year_opened))
+        nearest_stations = nearest_stations.loc[nearest_stations.year_opened < start_year]
         
         # Get the dataframes for each BOM AWS site and concatenate
         df_list = []
@@ -335,6 +339,7 @@ class bom_data_converter(object):
             sub_df.columns = ['{}_{}'.format(x, str(i)) for x in sub_df.columns]
             df_list.append(sub_df)
         df = pd.concat(df_list, axis = 1)
+        df = df.loc[str(start_year):]   
         dataset = df.to_xarray()
 
         # Generate variable attribute dictionaries and write to xarray dataset
@@ -638,7 +643,7 @@ def get_nearest_bom_station(lat, lon, stations = None, current = True,
         year = str(dt.datetime.now().year)
         stations = stations.loc[stations.last_file_year == year]
     df = stations.sort_values(['dist (km)']).head(nearest_n)
-    return df[['station_name', 'lat', 'lon', 'dist (km)']]
+    return df[['station_name', 'lat', 'lon', 'month_year_opened', 'dist (km)']]
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -681,9 +686,10 @@ def get_ozflux_site_list(master_file_path):
     header_row = 9
     header_list = sheet.row_values(header_row)
     df = pd.DataFrame()
-    for var in ['Site', 'Latitude', 'Longitude', 'Time step']:
+    for var in ['Site', 'Latitude', 'Longitude', 'Time step', 'Start year']:
         index_val = header_list.index(var)
-        df[var] = sheet.col_values(index_val, header_row + 1)   
+        df[var] = sheet.col_values(index_val, header_row + 1)
+    df['Start year'] = df['Start year'].astype(int)
     df.index = df[header_list[0]]
     df.drop(header_list[0], axis = 1, inplace = True)
     return df
