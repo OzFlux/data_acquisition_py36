@@ -64,7 +64,6 @@ def check_set_subdirs(base_dir):
                     'Precip_forecast_files', 'Working_files']:
         expected_path = os.path.join(base_dir, sub_dir)
         if os.path.exists(expected_path): continue
-        pdb.set_trace()
         os.makedirs(expected_path)
         missing_dirs.append(sub_dir)
     if not missing_dirs:
