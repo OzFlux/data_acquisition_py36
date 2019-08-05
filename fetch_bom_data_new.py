@@ -320,16 +320,17 @@ class bom_data_converter(object):
         ### This may fail because all stations get returned in the stations list
         ### but some have no data on the ftp site - to fix
         
-        # Find closest stations
+        # Find closest stations (that were established before the flux site)
         start_year = self.ozflux_sites.loc[site_name, 'Start year']
         lat = self.ozflux_sites.loc[site_name, 'Latitude']
         lon = self.ozflux_sites.loc[site_name, 'Longitude']
+        valid_stations = self.stations.copy()
+        valid_stations['year_opened'] = list(map(lambda x: int(x.split('/')[-1]), 
+                                                 self.stations.month_year_opened))
+        valid_stations = valid_stations.loc[valid_stations.year_opened < start_year]
         nearest_stations = get_nearest_bom_station(lat, lon, 
-                                                   stations = self.stations, 
-                                                   nearest_n = 10)
-        nearest_stations['year_opened'] = list(map(lambda x: int(x.split('/')[-1]), 
-                                                   nearest_stations.month_year_opened))
-        nearest_stations = nearest_stations.loc[nearest_stations.year_opened < start_year]
+                                                   stations = valid_stations, 
+                                                   nearest_n = 3)
         
         # Get the dataframes for each BOM AWS site and concatenate
         df_list = []
