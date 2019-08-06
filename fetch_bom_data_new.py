@@ -36,7 +36,7 @@ ftp_dir = 'anon2/home/ncc/srds/Scheduled_Jobs/DS010_OzFlux/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-aws_file_path = '/rdsi/market/CloudStor/Shared/Collated'
+aws_file_path = '/rdsi/market/CloudStor/Shared/AWS_BOM_all'
 master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
@@ -761,7 +761,7 @@ if __name__ == "__main__":
     aws.write_to_text_file(aws_file_path)
 
     # Get conversion class and write text data to nc file
-    nc_path = '/home/ian/Desktop/Ozflux_nc'
+    nc_path = '/rdsi/market/CloudStor/Shared/BOM_nc'
     conv_class = bom_data_converter()
     site_list = list(conv_class.ozflux_sites.index)
     for site in site_list:
