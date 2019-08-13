@@ -75,15 +75,6 @@ def check_set_subdirs(base_dir):
     return
 #------------------------------------------------------------------------------
 
-##------------------------------------------------------------------------------
-#def get_files_from_datestring(datestring):
-#    
-#    """Turn standard datestring format for ACCESS directories into list of 
-#       file IDs (0-5)"""
-#    
-#    return map(lambda x: '{}_{}'.format(datestring, str(x).zfill(3)), range(7))
-##------------------------------------------------------------------------------
-
 #------------------------------------------------------------------------------
 def get_ozflux_site_list(master_file_path):
     
@@ -176,10 +167,10 @@ def wget_exec(read_path, write_path, server_dir):
 #------------------------------------------------------------------------------
 
 retrieval_path = 'http://opendap.bom.gov.au:8080/thredds/{}/bmrc/access-r-fc/ops/surface/'
-base_dir = '/home/ian/Desktop/access_test'
-#base_dir = '/rdsi/market/access_test'
-master_file_path = '/home/ian/Temp/site_master.xls'
-#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+#base_dir = '/home/ian/Desktop/access_test'
+base_dir = '/rdsi/market/CloudStor/Shared/ACCESS'
+#master_file_path = '/home/ian/Temp/site_master.xls'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
 # MAIN PROGRAM
