@@ -76,6 +76,15 @@ then
     echo "No monthly directory available... created!"
     mkdir ../Monthly_files/$YEARMONTH
 fi
+
+MONTHLY_FILE=../Monthly_files/$YEARMONTH/$SITE.nc
+if [ ! -f $MONTHLY_FILE ]
+then
+    echo "No monthly file written... created"
+    mv temp012345.nc $MONTHLY_FILE
+else
+    ncrcat --rec_apn temp012345.nc $MONTHLY_FILE
+fi
  
 # 7) Remove all working files
 rm -r *
