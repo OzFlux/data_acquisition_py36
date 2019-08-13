@@ -2,11 +2,11 @@
 
 # Here we subset site data from continental-scale ACCESS files (by coords)
 # then concatenate to existing site files (placed into month folders);
-# the process is complicated by te fact that the ACCESS runs initialise at time
+# the process is complicated by the fact that the ACCESS runs initialise at time
 # zero, so the rainfall for that time does not include the accumulated rainfall 
 # since the previous time period - the solution is to keep the rainfall 
 # forecast for the 7th hour, and then add that as the zero hour rainfall for 
-# the next 6-hour period 
+# the next 6-hour period, and do so continuously
 
 # Initialise vars
 BASE_DIR="$1"
@@ -77,25 +77,14 @@ then
     mkdir ../Monthly_files/$YEARMONTH
 fi
 
-MONTHLY_FILE=../Monthly_files/$YEARMONTH/$SITE.nc
-if [ ! -f $MONTHLY_FILE ]
-then
-    echo "No monthly file written... created"
-    mv temp012345.nc $MONTHLY_FILE
-else
-    ncrcat --rec_apn temp012345.nc $MONTHLY_FILE
-fi
-
 #MONTHLY_FILE=../Monthly_files/$YEARMONTH/$SITE.nc
-#MONTHLY_FILE_OLD=../Monthly_files/$YEARMONTH/$SITE_old.nc
 #if [ ! -f $MONTHLY_FILE ]
 #then
 #    echo "No monthly file written... created"
 #    mv temp012345.nc $MONTHLY_FILE
 #else
-#    mv $MONTHLY_FILE $MONTHLY_FILE_OLD
-#    ncrcat $MONTHLY_FILE_OLD temp012345.nc $MONTHLY_FILE
+#    ncrcat --rec_apn temp012345.nc $MONTHLY_FILE
 #fi
-## 
+ 
 # 7) Remove all working files
 rm -r *

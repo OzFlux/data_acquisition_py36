@@ -75,14 +75,14 @@ def check_set_subdirs(base_dir):
     return
 #------------------------------------------------------------------------------
 
-#------------------------------------------------------------------------------
-def get_files_from_datestring(datestring):
-    
-    """Turn standard datestring format for ACCESS directories into list of 
-       file IDs (0-5)"""
-    
-    return map(lambda x: '{}_{}'.format(datestring, str(x).zfill(3)), range(7))
-#------------------------------------------------------------------------------
+##------------------------------------------------------------------------------
+#def get_files_from_datestring(datestring):
+#    
+#    """Turn standard datestring format for ACCESS directories into list of 
+#       file IDs (0-5)"""
+#    
+#    return map(lambda x: '{}_{}'.format(datestring, str(x).zfill(3)), range(7))
+##------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 def get_ozflux_site_list(master_file_path):
@@ -151,21 +151,24 @@ def purge_dir(directory, file_ext = '.tmp'):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def wget_exec(read_path, write_path, server_file_ID):
+def wget_exec(read_path, write_path, server_dir):
     
     """Build the complete wget string and retrieve temp file"""
     
-    print ('Retrieving forecast files for {}'.format(server_file_ID))
-    tmp_fname = os.path.join(write_path, '{}_access.tmp'.format(server_file_ID))
-    wget_prefix = '/usr/bin/wget -nv -a Download.log -O'
-    server_dir = server_file_ID.split('_')[0]
-    full_read_path = read_path.format('fileServer') + server_dir
-    server_fname = os.path.join(full_read_path,
-                                'ACCESS-R_{}_surface.nc'.format(server_file_ID))
-    cmd = '{0} {1} {2}'.format(wget_prefix, tmp_fname, server_fname)
-    if spc(cmd, shell=True):
-        raise RuntimeError('Error in command: {}'.format(cmd))
-    return tmp_fname
+    print ('Retrieving forecast files for date {}'.format(server_dir))
+    file_list = map(lambda x: '{}_{}'.format(server_dir, str(x).zfill(3)), 
+                    range(7))
+    for f in file_list:
+        print ('Forecast +{} hrs'.format(str(int(f.split('_')[-1]))))
+        tmp_fname = os.path.join(write_path, '{}_access.tmp'.format(f))
+        wget_prefix = '/usr/bin/wget -nv -a Download.log -O'
+        full_read_path = read_path.format('fileServer') + server_dir
+        server_fname = os.path.join(full_read_path,
+                                    'ACCESS-R_{}_surface.nc'.format(f))
+        cmd = '{0} {1} {2}'.format(wget_prefix, tmp_fname, server_fname)
+        if spc(cmd, shell=True):
+            raise RuntimeError('Error in command: {}'.format(cmd))
+    return
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -199,17 +202,13 @@ files_dict = check_seen_files(retrieval_path, base_dir, site_df.index)
 purge_dir(continental_file_path)
 
 # For each six-hour directory...
-for this_dir in sorted(files_dict.keys())[:2]:
-
-    # Get a list of the files we want to extract (UTC + 0-7)
-    file_list = get_files_from_datestring(this_dir)
+for this_dir in sorted(files_dict.keys()):
 
     # Get a list of the sites we need to collect data for
     sites_list = sorted(files_dict[this_dir])
 
-    # Grab the continent-wide file        
-    for f in file_list:    
-        wget_exec(retrieval_path, continental_file_path, f)
+    # Grab the continent-wide files (n = 6)    
+    wget_exec(retrieval_path, continental_file_path, this_dir)
     
     # Cut out site from continent-wide file and append 
     # (see shell script nco_shell.sh)    
