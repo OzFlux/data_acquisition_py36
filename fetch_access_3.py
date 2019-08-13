@@ -155,7 +155,7 @@ def wget_exec(read_path, write_path, server_file_ID):
     
     """Build the complete wget string and retrieve temp file"""
     
-    print ('Retrieving forecast files for {}, hours 0-6'.format(server_file_ID))
+    print ('Retrieving forecast files for {}'.format(server_file_ID))
     tmp_fname = os.path.join(write_path, '{}_access.tmp'.format(server_file_ID))
     wget_prefix = '/usr/bin/wget -nv -a Download.log -O'
     server_dir = server_file_ID.split('_')[0]
