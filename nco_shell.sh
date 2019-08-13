@@ -78,15 +78,24 @@ then
 fi
 
 MONTHLY_FILE=../Monthly_files/$YEARMONTH/$SITE.nc
-MONTHLY_FILE_OLD=../Monthly_files/$YEARMONTH/$SITE_old.nc
 if [ ! -f $MONTHLY_FILE ]
 then
     echo "No monthly file written... created"
     mv temp012345.nc $MONTHLY_FILE
 else
-    mv $MONTHLY_FILE $MONTHLY_FILE_OLD
-    ncrcat $MONTHLY_FILE_OLD temp012345.nc $MONTHLY_FILE
+    ncrcat --rec_apn temp012345.nc $MONTHLY_FILE
 fi
-# 
+
+#MONTHLY_FILE=../Monthly_files/$YEARMONTH/$SITE.nc
+#MONTHLY_FILE_OLD=../Monthly_files/$YEARMONTH/$SITE_old.nc
+#if [ ! -f $MONTHLY_FILE ]
+#then
+#    echo "No monthly file written... created"
+#    mv temp012345.nc $MONTHLY_FILE
+#else
+#    mv $MONTHLY_FILE $MONTHLY_FILE_OLD
+#    ncrcat $MONTHLY_FILE_OLD temp012345.nc $MONTHLY_FILE
+#fi
+## 
 # 7) Remove all working files
 rm -r *

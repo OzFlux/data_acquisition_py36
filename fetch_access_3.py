@@ -7,7 +7,7 @@ Created on Tue Jan 29 10:19:53 2019
 """
 
 from bs4 import BeautifulSoup
-from datetime import date, datetime, timedelta
+from datetime import datetime
 import netCDF4
 import numpy as np
 import os
@@ -155,6 +155,7 @@ def wget_exec(read_path, write_path, server_file_ID):
     
     """Build the complete wget string and retrieve temp file"""
     
+    print ('Retrieving forecast files for {}, hours 0-6'.format(server_file_ID))
     tmp_fname = os.path.join(write_path, '{}_access.tmp'.format(server_file_ID))
     wget_prefix = '/usr/bin/wget -nv -a Download.log -O'
     server_dir = server_file_ID.split('_')[0]
@@ -198,7 +199,7 @@ files_dict = check_seen_files(retrieval_path, base_dir, site_df.index)
 purge_dir(continental_file_path)
 
 # For each six-hour directory...
-for this_dir in sorted(files_dict.keys()):
+for this_dir in sorted(files_dict.keys())[:2]:
 
     # Get a list of the files we want to extract (UTC + 0-7)
     file_list = get_files_from_datestring(this_dir)
