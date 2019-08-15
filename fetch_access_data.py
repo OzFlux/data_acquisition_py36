@@ -15,7 +15,6 @@ import pandas as pd
 import requests
 from subprocess import call as spc
 import xlrd
-import pdb
 
 #------------------------------------------------------------------------------
 def check_seen_files(opendap_url, base_dir, site_list):
