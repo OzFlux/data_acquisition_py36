@@ -34,14 +34,15 @@ def check_seen_files(opendap_url, base_dir, site_list):
             target = os.path.join(target_path, '{}.nc'.format(site))
             try:
                 nc = netCDF4.Dataset(target)
+                dts = sorted(netCDF4.num2date(nc.variables['time'][:], 
+                             units = nc.variables['time'].units))
+                seen_dates = [datetime.strftime(x, '%Y%m%d') for x in dts]
+                seen_hours = [str(x.hour - x.hour % 6).zfill(2) for x in dts]
+                seen_dirs += list(set([x[0] + x[1] for x in zip(seen_dates, 
+                                                                seen_hours)]))
+                nc.close()
             except IOError:
                 continue
-            dts = sorted(netCDF4.num2date(nc.variables['time'][:], 
-                         units = nc.variables['time'].units))
-            seen_dates = [datetime.strftime(x, '%Y%m%d') for x in dts]
-            seen_hours = [str(x.hour - x.hour % 6).zfill(2) for x in dts]
-            seen_dirs += list(set([x[0] + x[1] for x in zip(seen_dates, 
-                                                            seen_hours)]))
         seen_df[site] = list(map(lambda x: x in seen_dirs, opendap_files))
     seen_df = seen_df.T
     seen_dict = {}
@@ -166,10 +167,10 @@ def wget_exec(read_path, write_path, server_dir):
 #------------------------------------------------------------------------------
 
 retrieval_path = 'http://opendap.bom.gov.au:8080/thredds/{}/bmrc/access-r-fc/ops/surface/'
-base_dir = '/home/ian/Desktop/access_test'
-#base_dir = '/rdsi/market/CloudStor/Shared/ACCESS'
-master_file_path = '/home/ian/Temp/site_master.xls'
-#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+#base_dir = '/home/ian/Desktop/access_test'
+base_dir = '/rdsi/market/CloudStor/Shared/ACCESS'
+#master_file_path = '/home/ian/Temp/site_master.xls'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
 # MAIN PROGRAM
