@@ -122,9 +122,12 @@ def nco_exec(base_directory, site_name, date_directory, latitude, longitude):
     """Call the shell script that cuts out the site coordinates and 
        concatenates with existing data (using NCO)"""
     
-    exec_string = ('./nco_shell.sh "{0}" "{1}" "{2}" "{3}" "{4}"'
-                   .format(base_directory, site_name, date_directory, 
-                           latitude, longitude))    
+    exec_fpath = os.path.realpath(__file__)
+    exec_dirpath = os.path.dirname(exec_fpath)
+    shell_fpath = os.path.join(exec_dirpath, 'nco_shell.sh')
+    exec_string = ('{0} "{1}" "{2}" "{3}" "{4}" "{5}"'
+                   .format(shell_fpath, base_directory, site_name, 
+                           date_directory, latitude, longitude))
     if spc(exec_string, shell = True):
         raise RuntimeError('Error in command: {}'.format(exec_string))
     return
@@ -137,8 +140,7 @@ def purge_dir(directory, file_ext = '.tmp'):
     
     f_list = filter(lambda x: os.path.splitext(x)[1] == '.tmp', 
                     os.listdir(directory))
-    for f in [os.path.join(directory, x) for x in f_list]:
-        os.remove(f)
+    for f in [os.path.join(directory, x) for x in f_list]: os.remove(f)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
