@@ -5,6 +5,8 @@ Created on Tue Jan 16 14:38:30 2018
 
 @author: ian
 """
+# System modules
+from collections import namedtuple
 from collections import OrderedDict
 import datetime as dt
 import json
@@ -16,18 +18,36 @@ import requests
 from scipy import interpolate, signal
 import webbrowser
 import xarray as xr
-
 import pdb
+
+# Custom modules
+import utils
+
+#------------------------------------------------------------------------------
+### Remote configurations ###
+#------------------------------------------------------------------------------
 
 api_base_url = 'https://modis.ornl.gov/rst/api/v1/'
 
 #------------------------------------------------------------------------------
-class modis_data(object):
-    
+### Local configurations ###
+#------------------------------------------------------------------------------
+
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+### BEGINNING OF CLASS SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+class modis_data():
+
     #--------------------------------------------------------------------------
     '''
     Object containing MODIS subset data
-    
+
     Args:
         * latitude (int or float): decimal latitude of location
         * longitude (int or float): decimal longitude of location
@@ -54,9 +74,9 @@ class modis_data(object):
     '''
 
     def __init__(self, product, band, latitude, longitude, 
-                 start_date=None, end_date = None,
-                 subset_height_km = 0, subset_width_km = 0, site = None, 
-                 qcfiltered = False):
+                 start_date=None, end_date=None,
+                 subset_height_km=0, subset_width_km=0, site=None, 
+                 qcfiltered=False):
         
         # Check validity of passed arguments 
         if not product in get_product_list(include_details = False):
@@ -74,22 +94,24 @@ class modis_data(object):
         if end_date is None: 
             end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
 
-        # Get the data (QC if requested)  
+        # Get the data and write additional attributes
         self.data_array = request_subset_by_coords(product, latitude, longitude, 
                                                    band, start_date, end_date, 
                                                    subset_height_km,
                                                    subset_width_km)
         band_attrs.update({'site': site})
         self.data_array.attrs.update(band_attrs)
+        
+        # QC if requested
         if qcfiltered:
             qc_dict = get_qc_details(product)
             qc_array = request_subset_by_coords(product, latitude, longitude, 
                                                 qc_dict['qc_name'], 
                                                 start_date, end_date, 
                                                 subset_height_km, subset_width_km)
-            self.data_array.data = np.where(qc_array.data <= qc_dict['reliability_threshold'],
-                                            self.data_array.data, np.nan)
-
+            self._qc_data_array(qc_array, qc_dict)
+    #--------------------------------------------------------------------------
+        
     #--------------------------------------------------------------------------
     def data_array_by_pixels(self, interpolate_missing = True, 
                              smooth_signal = False, 
@@ -117,6 +139,8 @@ class modis_data(object):
         for var in var_attrs.keys():
             out_xarr[var].attrs = var_attrs[var]
         return out_xarr
+    
+    # a=x.data_array.to_dataframe().unstack().T
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -204,6 +228,24 @@ class modis_data(object):
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
+    def _qc_data_array(self, qc_array, qc_dict):
+        
+        # Apply range limits
+        range_limits = self.data_array.attrs['valid_range'].split('to')
+        mn, mx = float(range_limits[0]), float(range_limits[-1])
+        scale = float(self.data_array.attrs['scale_factor'])
+        mn = scale * mn
+        mx = scale * mx
+        self.data_array = self.data_array.where((self.data_array >= mn) & 
+                                                (self.data_array <= mx))
+        
+        # Apply qc
+        max_allowed = qc_dict['reliability_threshold']
+        self.data_array = self.data_array.where((qc_array <= max_allowed))
+        return
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
     def _smooth_signal(self, series, n_points = 11, poly_order = 3):
         
         """Smooth (Savitzky-Golay) signal"""
@@ -279,6 +321,13 @@ class modis_data_network(modis_data):
                                                    qcfiltered = qcfiltered)
         band_attrs.update({'site': site_attrs['network_sitename']})
         self.data_array.attrs.update(band_attrs)        
+    #--------------------------------------------------------------------------
+    
+    #--------------------------------------------------------------------------
+    def _qc_data_array():
+        
+        print('Not defined for "modis_data_network" class!')
+        return
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -542,6 +591,19 @@ def get_pixel_subset(x_arr, pixels_per_side = 3):
                         dims = [ "y", "x", "time" ],
                         attrs = attrs_dict)
 #------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def modis_object(by_coords=True):
+    if by_coords:
+        return namedtuple('modis_by_coords', 
+                          ['product', 'band', 'latitude', 'longitude', 
+                           'start_date', 'end_date', 'subset_height_km', 
+                           'subset_width_km'])
+    else:
+        return namedtuple('modis_by_network', 
+                          ['product', 'band', 'network_name', 'site_ID', 
+                           'start_date', 'end_date'])
+#------------------------------------------------------------------------------
     
 #------------------------------------------------------------------------------
 ### MAIN PROGRAM
@@ -550,8 +612,17 @@ def get_pixel_subset(x_arr, pixels_per_side = 3):
 #------------------------------------------------------------------------------
 if __name__ == "__main__":
 
+    sites = sites=utils.get_ozflux_site_list(master_file_path)
+    
+#    for site in sites:
+    
     x = modis_data_network('MOD13Q1', '250m_16_days_EVI', 'OZFLUX', 'AU-Whr',
                            qcfiltered=True)
     x.data_array = get_pixel_subset(x.data_array, pixels_per_side = 5)
     ozflux_data_array = x.data_array_by_pixels(smooth_signal = True)
+    ozflux_data_array['EVI'] = (['time'], x.get_spatial_mean())
+    ozflux_data_array['EVI_smoothed'] = (['time'], x.get_spatial_mean(smooth_signal=True))
     new_xarray = ozflux_data_array.resample({'time': '30T'}).interpolate()
+    new_xarray.time.encoding = {'units': 'days since 1800-01-01',
+                                '_FillValue': None}
+    new_xarray.to_netcdf('/home/ian/Desktop/zany.nc', format='NETCDF4')
