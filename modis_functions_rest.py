@@ -34,10 +34,10 @@ api_base_url = 'https://modis.ornl.gov/rst/api/v1/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
-master_file_path = '/home/ian/Temp/site_master.xls'
-#output_path = '/rdsi/market/CloudStor/Shared/MODIS'
-output_path = '/home/ian/Desktop/MODIS'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+#master_file_path = '/home/ian/Temp/site_master.xls'
+output_path = '/rdsi/market/CloudStor/Shared/MODIS'
+#output_path = '/home/ian/Desktop/MODIS'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
