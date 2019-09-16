@@ -34,10 +34,10 @@ api_base_url = 'https://modis.ornl.gov/rst/api/v1/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
-#master_file_path = '/home/ian/Temp/site_master.xls'
-output_path = '/rdsi/market/CloudStor/Shared/MODIS'
-#output_path = '/home/ian/Desktop/MODIS'
+#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+master_file_path = '/home/ian/Temp/site_master.xls'
+#output_path = '/rdsi/market/CloudStor/Shared/MODIS'
+output_path = '/home/ian/Desktop/MODIS'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -172,7 +172,6 @@ class modis_data():
                                          upsample_to_daily)
             if upsample_to_daily: idx = pd.date_range(idx[0], idx[-1], freq='D')
             if not smooth_signal: return pd.Series(interp_arr, index = idx)
-        pdb.set_trace()
         if smooth_signal:
             return pd.Series(_smooth_signal(interp_arr), index = idx)
         return pd.Series(arr, index = idx)
