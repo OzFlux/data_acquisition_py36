@@ -10,6 +10,7 @@ from collections import namedtuple
 from collections import OrderedDict
 import datetime as dt
 import json
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -33,8 +34,8 @@ api_base_url = 'https://modis.ornl.gov/rst/api/v1/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
-
+master_file_path = '/home/ian/Temp/site_master.xls'
+output_path = '/home/ian/Desktop/MODIS'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -58,6 +59,7 @@ class modis_data():
         * band (str): MODIS product band for which to retrieve data (use the 
           'get_band_list(<product>)' function for a list of the available 
           bands)
+    Kwargs:
         * start_date (python datetime or None): first date for which data is 
           required, or if None, first date available on server
         * end_date (python datetime): last date for which data is required,
@@ -66,6 +68,10 @@ class modis_data():
           from upper to lower boundary of subset
         * subset_width_km (int): distance in kilometres (centred on location)
           from left to right boundary of subset
+        * site (str): name of site to be attached to the global attributes 
+          of the xarray dataset
+        * qcfiltered (bool): whether to eliminate observations that fail 
+          modis qc
     
     Returns:
         * MODIS data class containing the following:
@@ -130,10 +136,14 @@ class modis_data():
                                        'y': self.data_array.y[i].item(),
                                        'row': i, 'col': j}
         df = pd.DataFrame(d, index = self.data_array.time)
+        idx_start, idx_end = df.index[0], df.index[-1]
         if interpolate_missing or smooth_signal:
-            df = df.apply(self._interp_missing)
+            df = df.apply(_interp_missing, upsample_to_daily=upsample_to_daily)
+            if upsample_to_daily:
+                df.index = pd.date_range(idx_start, idx_end, freq='D')
+                df.index.name = 'time'
         if smooth_signal:
-            df = df.apply(self._smooth_signal)
+            df = df.apply(_smooth_signal)
         out_xarr = df.to_xarray()
         out_xarr.attrs = self.data_array.attrs
         for var in var_attrs.keys():
@@ -145,56 +155,34 @@ class modis_data():
 
     #--------------------------------------------------------------------------
     def get_spatial_mean(self, filter_outliers=True, interpolate_missing=True,
-                         smooth_signal=False):
+                         smooth_signal=False, upsample_to_daily=False):
         
         idx = pd.to_datetime(self.data_array.time.data)
         l = []
         if filter_outliers:
             for i in range(self.data_array.data.shape[2]): 
-                l.append(self._median_filter(self.data_array.data[:, :, i]))
+                l.append(_median_filter(self.data_array.data[:, :, i]))
             arr = np.array(l)
         else:
-            arr = self.data_array.mean(['x', 'y'])
-        if interpolate_missing or smooth_signal:
-            interp_arr = self._interp_missing(pd.Series(arr, index = idx))
+            arr = self.data_array.mean(['x', 'y']).to_series()
+        if interpolate_missing or smooth_signal or upsample_to_daily:
+            interp_arr = _interp_missing(pd.Series(arr, index = idx),
+                                         upsample_to_daily)
+            if upsample_to_daily: idx = pd.date_range(idx[0], idx[-1], freq='D')
             if not smooth_signal: return pd.Series(interp_arr, index = idx)
+        pdb.set_trace()
         if smooth_signal:
-            return pd.Series(self._smooth_signal(interp_arr), index = idx)
+            return pd.Series(_smooth_signal(interp_arr), index = idx)
         return pd.Series(arr, index = idx)
     #--------------------------------------------------------------------------
     
-    #--------------------------------------------------------------------------
-    def _interp_missing(self, series, upsample_to_daily = False):
-        
-        """Interpolate (Akima) signal"""
-        
-        days = np.array((series.index - series.index[0]).days)
-        data = np.array(series)
-        valid_idx = np.where(~np.isnan(data))
-        f = interpolate.Akima1DInterpolator(days[valid_idx], data[valid_idx])
-        if upsample_to_daily: days = np.arange(days[0], days[-1], 1)
-        return f(days)
-    #--------------------------------------------------------------------------
-
-    #--------------------------------------------------------------------------
-    def _median_filter(self, arr, mult = 1.5):
-        
-        """Filter outliers from the 2d spatial array"""
-  
-        n_valid = sum(~np.isnan(arr)).sum()
-        if n_valid == 0: return np.nan
-        pct75 = np.nanpercentile(arr, 75)
-        pct25 = np.nanpercentile(arr, 25)
-        iqr = pct75 - pct25
-        range_min = pct25 - mult * iqr
-        range_max = pct75 + mult * iqr
-        filt_arr = np.where((arr < range_min) | (arr > range_max), np.nan, arr)
-        return np.nanmean(filt_arr)
-    #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
-    def plot_data(self, pixel = 'centre'):
+    def plot_data(self, pixel = 'centre', plot_to_screen = True):
 
+        state = mpl.is_interactive()
+        if plot_to_screen: plt.ion()
+        if not plot_to_screen: plt.ioff()
         df = self.data_array_by_pixels().to_dataframe()
         smooth_df = self.data_array_by_pixels(smooth_signal = True).to_dataframe()
         if pixel == 'centre':
@@ -225,6 +213,8 @@ class modis_data():
         ax.plot(df.index, series, lw = 2, label = col_name)
         ax.plot(df.index, smooth_series, lw = 2, label = '{}_smoothed'.format(col_name))
         ax.legend(frameon = False)
+        plt.ion() if state else plt.ioff()
+        return fig
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
@@ -242,17 +232,8 @@ class modis_data():
         # Apply qc
         max_allowed = qc_dict['reliability_threshold']
         self.data_array = self.data_array.where((qc_array <= max_allowed))
-        return
     #--------------------------------------------------------------------------
-    
-    #--------------------------------------------------------------------------
-    def _smooth_signal(self, series, n_points = 11, poly_order = 3):
         
-        """Smooth (Savitzky-Golay) signal"""
-        
-        return signal.savgol_filter(series, n_points, poly_order, mode = "mirror")
-    #--------------------------------------------------------------------------
-    
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -279,7 +260,7 @@ class modis_data_network(modis_data):
           required, or if None, first date available on server
         * end_date (python datetime): last date for which data is required,
           or if None, last date available on server
-        * qcfiltered (boolean): whether or not to impose QC filtering on the data
+        * qcfiltered (bool): whether or not to impose QC filtering on the data
     
     Returns:
         * MODIS data class containing the following:
@@ -301,7 +282,7 @@ class modis_data_network(modis_data):
             site_attrs = get_network_list(network_name)[site_ID]
         except KeyError:
             raise KeyError('Site ID code not found! Check available site ID '
-                           'codes using get_network_list(network)'.format(product))
+                           'codes using get_network_list(network)')
         if not network_name in get_network_list():
             raise KeyError('Network not available from web service! Check '
                            'available networks list using get_network_list()')
@@ -324,10 +305,9 @@ class modis_data_network(modis_data):
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
-    def _qc_data_array():
+    def _qc_data_array(self):
         
         print('Not defined for "modis_data_network" class!')
-        return
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -431,6 +411,40 @@ def get_network_list(network = None, include_details = True):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
+def _get_pixel_subset(x_arr, pixels_per_side = 3):
+    
+    """Create a spatial subset of a larger dataset (relative to centre pixel)"""
+    
+    try:
+        assert x_arr.nrows == x_arr.ncols
+    except AssertionError: 
+        raise RuntimeError('Malformed data array!')
+    if not x_arr.nrows % 2 != 0:
+        raise TypeError('pixels_per_side must be an odd integer!')
+    if not pixels_per_side < x_arr.nrows:
+        print('Pixels requested exceeds pixels available!')
+        return x_arr
+    centre_pixel = int(x_arr.nrows / 2)
+    pixel_min = centre_pixel - int(pixels_per_side / 2)
+    pixel_max = pixel_min + pixels_per_side
+    new_data = []
+    for i in range(x_arr.data.shape[2]):
+        new_data.append(x_arr.data[pixel_min: pixel_max, pixel_min: pixel_max, i])
+    new_x = x_arr.x[pixel_min: pixel_max]
+    new_y = x_arr.y[pixel_min: pixel_max]
+    attrs_dict = x_arr.attrs.copy()
+    attrs_dict['nrows'] = pixels_per_side
+    attrs_dict['ncols'] = pixels_per_side
+    attrs_dict['xllcorner'] = new_x[0].item()
+    attrs_dict['yllcorner'] = new_y[0].item()
+    return xr.DataArray(name = x_arr.band,
+                        data = np.dstack(new_data),
+                        coords = [new_y, new_x, x_arr.time],
+                        dims = [ "y", "x", "time" ],
+                        attrs = attrs_dict)
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 def get_qc_details(product = None):
 
     """Get the qc variable details for the product"""
@@ -442,6 +456,35 @@ def get_qc_details(product = None):
     if not product: return d
     return d[product]
 #------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def _interp_missing(series, upsample_to_daily=False):
+    
+    """Interpolate (Akima) signal"""
+    
+    days = np.array((series.index - series.index[0]).days)
+    data = np.array(series)
+    valid_idx = np.where(~np.isnan(data))
+    f = interpolate.Akima1DInterpolator(days[valid_idx], data[valid_idx])
+    if upsample_to_daily: days = np.arange(days[0], days[-1] + 1, 1)
+    return f(days)
+#------------------------------------------------------------------------------
+
+#--------------------------------------------------------------------------
+def _median_filter(arr, mult = 1.5):
+    
+    """Filter outliers from the 2d spatial array"""
+  
+    n_valid = sum(~np.isnan(arr)).sum()
+    if n_valid == 0: return np.nan
+    pct75 = np.nanpercentile(arr, 75)
+    pct25 = np.nanpercentile(arr, 25)
+    iqr = pct75 - pct25
+    range_min = pct25 - mult * iqr
+    range_max = pct75 + mult * iqr
+    filt_arr = np.where((arr < range_min) | (arr > range_max), np.nan, arr)
+    return np.nanmean(filt_arr)
+#--------------------------------------------------------------------------
     
 #------------------------------------------------------------------------------
 def modis_to_from_pydatetime(date):
@@ -472,8 +515,8 @@ def _process_data(data, prod, band):
             if j['band'] == meta['band']:
                 data_dict['dates'].append(j['calendar_date'])
                 data_list = []
-                for x in j['data']:
-                    try: data_list.append(float(x))
+                for obs in j['data']:
+                    try: data_list.append(float(obs))
                     except ValueError: data_list.append(np.nan)
                 new_array = np.array(data_list).reshape(meta['nrows'], 
                                                         meta['ncols'])
@@ -539,6 +582,7 @@ def request_subset_by_siteid(prod, band, network, siteid, start_date, end_date,
     
     modis_start = modis_to_from_pydatetime(start_date)
     modis_end = modis_to_from_pydatetime(end_date)
+    print('Retrieving data for product {0}, band {1}'.format(prod, band))
     subset_str = '/subsetFiltered?' if qcfiltered else '/subset?'
     url = (''.join([api_base_url, prod, '/', network, '/', siteid, 
                     subset_str, band, '&startDate=', modis_start,
@@ -559,37 +603,11 @@ def request_subset_by_URLstring(URLstr):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_pixel_subset(x_arr, pixels_per_side = 3):
+def _smooth_signal(series, n_points = 11, poly_order = 3):
     
-    """Create a spatial subset of a larger dataset (relative to centre pixel)"""
+    """Smooth (Savitzky-Golay) signal"""
     
-    try:
-        assert x_arr.nrows == x_arr.ncols
-    except AssertionError: 
-        raise RuntimeError('Malformed data array!')
-    if not x_arr.nrows % 2 != 0:
-        raise TypeError('pixels_per_side must be an odd integer!')
-    if not pixels_per_side < x_arr.nrows:
-        print('Pixels requested exceeds pixels available!')
-        return x_arr
-    centre_pixel = int(x_arr.nrows / 2)
-    pixel_min = centre_pixel - int(pixels_per_side / 2)
-    pixel_max = pixel_min + pixels_per_side
-    new_data = []
-    for i in range(x_arr.data.shape[2]):
-        new_data.append(x_arr.data[pixel_min: pixel_max, pixel_min: pixel_max, i])
-    new_x = x_arr.x[pixel_min: pixel_max]
-    new_y = x_arr.y[pixel_min: pixel_max]
-    attrs_dict = x_arr.attrs.copy()
-    attrs_dict['nrows'] = pixels_per_side
-    attrs_dict['ncols'] = pixels_per_side
-    attrs_dict['xllcorner'] = new_x[0].item()
-    attrs_dict['yllcorner'] = new_y[0].item()
-    return xr.DataArray(name = x_arr.band,
-                        data = np.dstack(new_data),
-                        coords = [new_y, new_x, x_arr.time],
-                        dims = [ "y", "x", "time" ],
-                        attrs = attrs_dict)
+    return signal.savgol_filter(series, n_points, poly_order, mode = "mirror")
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -599,7 +617,6 @@ def modis_object(by_coords=True):
                           ['product', 'band', 'latitude', 'longitude', 
                            'start_date', 'end_date', 'subset_height_km', 
                            'subset_width_km'])
-    else:
         return namedtuple('modis_by_network', 
                           ['product', 'band', 'network_name', 'site_ID', 
                            'start_date', 'end_date'])
@@ -612,17 +629,55 @@ def modis_object(by_coords=True):
 #------------------------------------------------------------------------------
 if __name__ == "__main__":
 
+    # Get sites info for processing
     sites = sites=utils.get_ozflux_site_list(master_file_path)
     
-#    for site in sites:
-    
-    x = modis_data_network('MOD13Q1', '250m_16_days_EVI', 'OZFLUX', 'AU-Whr',
-                           qcfiltered=True)
-    x.data_array = get_pixel_subset(x.data_array, pixels_per_side = 5)
-    ozflux_data_array = x.data_array_by_pixels(smooth_signal = True)
-    ozflux_data_array['EVI'] = (['time'], x.get_spatial_mean())
-    ozflux_data_array['EVI_smoothed'] = (['time'], x.get_spatial_mean(smooth_signal=True))
-    new_xarray = ozflux_data_array.resample({'time': '30T'}).interpolate()
-    new_xarray.time.encoding = {'units': 'days since 1800-01-01',
-                                '_FillValue': None}
-    new_xarray.to_netcdf('/home/ian/Desktop/zany.nc', format='NETCDF4')
+    # Get list of ozflux sites that are in the MODIS collection (note Wombat 
+    # has designated site name 'Wombat', so change in dict)
+    ozflux_modis_collection_sites = get_network_list('OZFLUX')
+    coll_dict = {ozflux_modis_collection_sites[x]['network_sitename']: 
+                 x for x in ozflux_modis_collection_sites.keys()}
+    coll_dict['Wombat State Forest'] = coll_dict.pop('Wombat')
+
+    # Get site data and write to netcdf
+    for site in sites.index:
+        
+        print('Retrieving data for site {}:'.format(site))
+        
+        nc_file_name = '{}_EVI.nc'.format(site.replace(' ', '_'))
+        plot_file_name = '{}_EVI.png'.format(site.replace(' ', '_'))
+        full_nc_path = os.path.join(output_path, nc_file_name)
+        full_plot_path = os.path.join(output_path, plot_file_name)
+        try: first_date = dt.date(int(sites.loc[site, 'Start year']) - 1, 7, 1)
+        except (TypeError, ValueError): first_date = None
+        try: last_date = dt.date(int(sites.loc[site, 'End year']) + 1, 6, 1)
+        except (TypeError, ValueError): last_date = None
+        
+        # Get sites in the collection
+        if site in coll_dict.keys():
+            site_code = coll_dict[site]
+            x = modis_data_network('MOD13Q1', '250m_16_days_EVI', 'OZFLUX', 
+                                   site_code, first_date, last_date,
+                                   qcfiltered=True)
+            x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
+        
+        # Get sites not in the collection
+        else:
+            x = modis_data('MOD13Q1', '250m_16_days_EVI', 
+                           sites.loc[site, 'Latitude'], 
+                           sites.loc[site, 'Longitude'], first_date, last_date,
+                           1, 1, site, qcfiltered=True)
+            x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
+        
+        # Get outputs and write to file
+        thisfig = x.plot_data(plot_to_screen=False)
+        thisfig.savefig(full_plot_path)
+        plt.close(thisfig)
+        ozflux_data_array = x.data_array_by_pixels(smooth_signal = True)
+        ozflux_data_array['EVI'] = (['time'], x.get_spatial_mean())
+        ozflux_data_array['EVI_smoothed'] = (['time'], 
+                                             x.get_spatial_mean(smooth_signal=True))
+        new_xarray = ozflux_data_array.resample({'time': '30T'}).interpolate()
+        new_xarray.time.encoding = {'units': 'days since 1800-01-01',
+                                    '_FillValue': None}
+        new_xarray[['EVI', 'EVI_smoothed']].to_netcdf(full_nc_path, format='NETCDF4')
