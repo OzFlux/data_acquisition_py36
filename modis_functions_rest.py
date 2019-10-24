@@ -8,6 +8,7 @@ Created on Tue Jan 16 14:38:30 2018
 # System modules
 from collections import namedtuple
 from collections import OrderedDict
+import copy as cp
 import datetime as dt
 import json
 import matplotlib as mpl
@@ -16,7 +17,9 @@ import numpy as np
 import os
 import pandas as pd
 import requests
+from requests.exceptions import ConnectionError
 from scipy import interpolate, signal
+from time import sleep
 import webbrowser
 import xarray as xr
 import pdb
@@ -34,10 +37,10 @@ api_base_url = 'https://modis.ornl.gov/rst/api/v1/'
 ### Local configurations ###
 #------------------------------------------------------------------------------
 
-master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
-#master_file_path = '/home/ian/Temp/site_master.xls'
-output_path = '/rdsi/market/CloudStor/Shared/MODIS'
-#output_path = '/home/ian/Desktop/MODIS'
+#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+master_file_path = '/home/ian/Temp/site_master.xls'
+#output_path = '/rdsi/market/CloudStor/Shared/MODIS'
+output_path = '/home/ian/Desktop/MODIS'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -54,9 +57,9 @@ class modis_data():
     Args:
         * latitude (int or float): decimal latitude of location
         * longitude (int or float): decimal longitude of location
-        * product (str): MODIS product for which to retrieve data (note that 
-          not all products are available from the web service - use the 
-          'get_product_list()' function of this module for a list of the 
+        * product (str): MODIS product for which to retrieve data (note that
+          not all products are available from the web service - use the
+          'get_product_list()' function of this module for a list of the
           available products)'
         * band (str): MODIS product band for which to retrieve data (use the 
           'get_band_list(<product>)' function for a list of the available 
@@ -121,9 +124,8 @@ class modis_data():
     #--------------------------------------------------------------------------
         
     #--------------------------------------------------------------------------
-    def data_array_by_pixels(self, interpolate_missing = True, 
-                             smooth_signal = False, 
-                             upsample_to_daily = False):
+    def data_array_by_pixels(self, interpolate_missing=True, 
+                             smooth_signal=False):
 
         d = {}
         var_attrs = {}
@@ -133,19 +135,13 @@ class modis_data():
             for j in range(cols):
                 name_idx = str((i * rows) + j + 1)
                 var_name = 'pixel_{}'.format(name_idx)
-                d[var_name] = self.data_array.data[i,j,:]
+                d[var_name] = self.data_array.data[i, j, :]
                 var_attrs[var_name] = {'x': self.data_array.x[j].item(),
                                        'y': self.data_array.y[i].item(),
                                        'row': i, 'col': j}
-        df = pd.DataFrame(d, index = self.data_array.time)
-        idx_start, idx_end = df.index[0], df.index[-1]
-        if interpolate_missing or smooth_signal:
-            df = df.apply(_interp_missing, upsample_to_daily=upsample_to_daily)
-            if upsample_to_daily:
-                df.index = pd.date_range(idx_start, idx_end, freq='D')
-                df.index.name = 'time'
-        if smooth_signal:
-            df = df.apply(_smooth_signal)
+        df = pd.DataFrame(d, index=self.data_array.time)
+        if interpolate_missing or smooth_signal: df = df.apply(_interp_missing)
+        if smooth_signal: df = df.apply(_smooth_signal)
         out_xarr = df.to_xarray()
         out_xarr.attrs = self.data_array.attrs
         for var in var_attrs.keys():
@@ -157,35 +153,32 @@ class modis_data():
 
     #--------------------------------------------------------------------------
     def get_spatial_mean(self, filter_outliers=True, interpolate_missing=True,
-                         smooth_signal=False, upsample_to_daily=False):
+                         smooth_signal=False):
         
-        idx = pd.to_datetime(self.data_array.time.data)
-        l = []
+        """Must be a better way to index the time steps than as numpy arrays"""
+        
+        da = cp.deepcopy(self.data_array)
+        idx = pd.to_datetime(da.time.data)
+        idx.name = 'time'
         if filter_outliers:
-            for i in range(self.data_array.data.shape[2]): 
-                l.append(_median_filter(self.data_array.data[:, :, i]))
-            arr = np.array(l)
-        else:
-            arr = self.data_array.mean(['x', 'y']).to_series()
-        if interpolate_missing or smooth_signal or upsample_to_daily:
-            interp_arr = _interp_missing(pd.Series(arr, index = idx),
-                                         upsample_to_daily)
-            if upsample_to_daily: idx = pd.date_range(idx[0], idx[-1], freq='D')
-            if not smooth_signal: return pd.Series(interp_arr, index = idx)
-        if smooth_signal:
-            return pd.Series(_smooth_signal(interp_arr), index = idx)
-        return pd.Series(arr, index = idx)
+            for i in range(da.data.shape[2]): 
+                da.data[:, :, i] = _median_filter(da.data[:, :, i])
+        s = da.mean(['x', 'y']).to_series()
+        if interpolate_missing or smooth_signal: s = _interp_missing(s)
+        if smooth_signal: s = pd.Series(_smooth_signal(s), index=s.index)
+        s.name = 'Mean'
+        return s
     #--------------------------------------------------------------------------
     
     
     #--------------------------------------------------------------------------
-    def plot_data(self, pixel = 'centre', plot_to_screen = True):
+    def plot_data(self, pixel='centre', plot_to_screen=True):
 
         state = mpl.is_interactive()
         if plot_to_screen: plt.ion()
         if not plot_to_screen: plt.ioff()
         df = self.data_array_by_pixels().to_dataframe()
-        smooth_df = self.data_array_by_pixels(smooth_signal = True).to_dataframe()
+        smooth_df = self.data_array_by_pixels(smooth_signal=True).to_dataframe()
         if pixel == 'centre':
             target_pixel = int(len(df.columns) / 2)
         elif isinstance(pixel, int):
@@ -198,6 +191,7 @@ class modis_data():
         col_name = df.columns[target_pixel]
         series = df[col_name]
         smooth_series = smooth_df[col_name]
+        series_label = 'centre_pixel' if pixel == 'centre' else col_name
         mean_series = df.mean(axis = 1)
         fig, ax = plt.subplots(1, 1, figsize = (14, 8))
         ax.spines['right'].set_visible(False)
@@ -211,8 +205,9 @@ class modis_data():
         ax.plot(df.index, df[df.columns[0]], color = 'grey', alpha = 0.1, label = 'All pixels')
         ax.plot(df.index, df[df.columns[1:]], color = 'grey', alpha = 0.1)
         ax.plot(df.index, mean_series, color = 'black', alpha = 0.5, label = 'All pixels (mean)')
-        ax.plot(df.index, series, lw = 2, label = col_name)
-        ax.plot(df.index, smooth_series, lw = 2, label = '{}_smoothed'.format(col_name))
+        ax.plot(df.index, series, lw = 2, label = series_label)
+        ax.plot(df.index, smooth_series, lw = 2, 
+                label = '{}_smoothed'.format(series_label))
         ax.legend(frameon = False)
         plt.ion() if state else plt.ioff()
         return fig
@@ -297,18 +292,29 @@ class modis_data_network(modis_data):
         if end_date is None: 
             end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
         
-        # Get the data (QC if requested)
+        # Get the data and write additional attributes
         self.data_array = request_subset_by_siteid(product, band, network_name,
                                                    site_ID, start_date, end_date, 
                                                    qcfiltered = qcfiltered)
         band_attrs.update({'site': site_attrs['network_sitename']})
-        self.data_array.attrs.update(band_attrs)        
+        self.data_array.attrs.update(band_attrs)
+        
+        # QC if requested
+        if qcfiltered:
+            self._qc_data_array()
     #--------------------------------------------------------------------------
     
     #--------------------------------------------------------------------------
     def _qc_data_array(self):
         
-        print('Not defined for "modis_data_network" class!')
+        # Apply range limits
+        range_limits = self.data_array.attrs['valid_range'].split('to')
+        mn, mx = float(range_limits[0]), float(range_limits[-1])
+        scale = float(self.data_array.attrs['scale_factor'])
+        mn = scale * mn
+        mx = scale * mx
+        self.data_array = self.data_array.where((self.data_array >= mn) & 
+                                                (self.data_array <= mx))
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -459,7 +465,7 @@ def get_qc_details(product = None):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def _interp_missing(series, upsample_to_daily=False):
+def _interp_missing(series):
     
     """Interpolate (Akima) signal"""
     
@@ -467,8 +473,7 @@ def _interp_missing(series, upsample_to_daily=False):
     data = np.array(series)
     valid_idx = np.where(~np.isnan(data))
     f = interpolate.Akima1DInterpolator(days[valid_idx], data[valid_idx])
-    if upsample_to_daily: days = np.arange(days[0], days[-1] + 1, 1)
-    return f(days)
+    return pd.Series(f(days), index=series.index)
 #------------------------------------------------------------------------------
 
 #--------------------------------------------------------------------------
@@ -598,7 +603,15 @@ def request_subset_by_URLstring(URLstr):
     """Submit request to ORNL DAAC server"""
     
     header = {'Accept': 'application/json'}
-    response = requests.get(URLstr, headers = header)
+    for this_try in range(5):
+        try:
+            response = requests.get(URLstr, headers = header)
+            break
+        except ConnectionError:
+            response = None
+            sleep(5)
+    if response is None: raise RuntimeError('Connection error - '
+                                            'server not responsing')
     _error_codes(response)
     return json.loads(response.text)    
 #------------------------------------------------------------------------------
@@ -607,7 +620,7 @@ def request_subset_by_URLstring(URLstr):
 def _smooth_signal(series, n_points = 11, poly_order = 3):
     
     """Smooth (Savitzky-Golay) signal"""
-    
+
     return signal.savgol_filter(series, n_points, poly_order, mode = "mirror")
 #------------------------------------------------------------------------------
 
@@ -618,9 +631,9 @@ def modis_object(by_coords=True):
                           ['product', 'band', 'latitude', 'longitude', 
                            'start_date', 'end_date', 'subset_height_km', 
                            'subset_width_km'])
-        return namedtuple('modis_by_network', 
-                          ['product', 'band', 'network_name', 'site_ID', 
-                           'start_date', 'end_date'])
+    return namedtuple('modis_by_network', 
+                      ['product', 'band', 'network_name', 'site_ID', 
+                       'start_date', 'end_date'])
 #------------------------------------------------------------------------------
     
 #------------------------------------------------------------------------------
@@ -641,7 +654,7 @@ if __name__ == "__main__":
     coll_dict['Wombat State Forest'] = coll_dict.pop('Wombat')
 
     # Get site data and write to netcdf
-    for site in sites.index:
+    for site in sites.index[22:]:
         
         print('Retrieving data for site {}:'.format(site))
         
@@ -660,7 +673,6 @@ if __name__ == "__main__":
             x = modis_data_network('MOD13Q1', '250m_16_days_EVI', 'OZFLUX', 
                                    site_code, first_date, last_date,
                                    qcfiltered=True)
-            x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
         
         # Get sites not in the collection
         else:
@@ -668,17 +680,19 @@ if __name__ == "__main__":
                            sites.loc[site, 'Latitude'], 
                            sites.loc[site, 'Longitude'], first_date, last_date,
                            1, 1, site, qcfiltered=True)
-            x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
         
-        # Get outputs and write to file
+        # Reduce the number of pixels to 5 x 5
+        x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
+        
+        # Get outputs and write to file (plots then nc)
         thisfig = x.plot_data(plot_to_screen=False)
         thisfig.savefig(full_plot_path)
         plt.close(thisfig)
-        ozflux_data_array = x.data_array_by_pixels(smooth_signal = True)
-        ozflux_data_array['EVI'] = (['time'], x.get_spatial_mean())
-        ozflux_data_array['EVI_smoothed'] = (['time'], 
-                                             x.get_spatial_mean(smooth_signal=True))
-        new_xarray = ozflux_data_array.resample({'time': '30T'}).interpolate()
-        new_xarray.time.encoding = {'units': 'days since 1800-01-01',
-                                    '_FillValue': None}
-        new_xarray[['EVI', 'EVI_smoothed']].to_netcdf(full_nc_path, format='NETCDF4')
+        da = (pd.DataFrame({'EVI': x.get_spatial_mean(),
+                            'EVI_smoothed': x.get_spatial_mean(smooth_signal=True)})
+              .to_xarray())
+        da.attrs = x.data_array.attrs
+        resampled_da = da.resample({'time': '30T'}).interpolate()
+        resampled_da.time.encoding = {'units': 'days since 1800-01-01',
+                                      '_FillValue': None}
+        resampled_da.to_netcdf(full_nc_path, format='NETCDF4')
