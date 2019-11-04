@@ -23,6 +23,8 @@ from timezonefinder import TimezoneFinder as tzf
 import xlrd
 import zipfile
 
+import pdb
+
 #------------------------------------------------------------------------------
 ### Remote configurations ###
 #------------------------------------------------------------------------------
@@ -79,9 +81,8 @@ class bom_data_getter(object):
         """Write out a line of dummy data with correct spacing and site 
            details, but no met data"""
         
-        station_details = self.stations.loc()
-        start_list = ['dd', station_details.station_id, 
-                      station_details.station_name.zfill(40)]
+        station_details = self.stations.loc[station_id]
+        start_list = ['dd', station_id, station_details.station_name.zfill(40)]
         try:
             local_datetime = self.get_local_datetime(datetime, 
                                                      station_details.timezone)
@@ -246,8 +247,8 @@ class bom_data_getter(object):
                 return str(round(float(kmh) / 3.6, 1)).rjust(5)
             except:
                 return kmh.rjust(5)
-    
-        line_list = line.decode().split(',')
+        if isinstance(line, str): line_list = line.split(',')
+        if isinstance(line, bytes): line_list = line.decode().split(',')
         line_list[1] = line_list[1].zfill(6)
         line_list[23] = convert_kmh_2_ms(line_list[23])
         line_list[27] = convert_kmh_2_ms(line_list[27])
@@ -312,7 +313,7 @@ class bom_data_converter(object):
         df['q'] = met_funcs.get_q()
         df['Ah'] = met_funcs.get_Ah()
         df['Precip'] = met_funcs.get_instantaneous_precip()
-        df.drop('Precip_accum', axis=1, inplace=True)
+        df.drop(['Precip_accum', 'local_time'], axis=1, inplace=True)
         df.ps = df.ps / 10
         return df
     #--------------------------------------------------------------------------
@@ -480,9 +481,9 @@ class _met_funcs(object):
     #--------------------------------------------------------------------------
     def get_instantaneous_precip(self):
         
-        inst_precip = self.df.Precip - self.df.Precip.shift()
+        inst_precip = self.df.Precip_accum - self.df.Precip_accum.shift()
         time_bool = self.df.local_time / 9.5 == 1
-        inst_precip = inst_precip.where(~time_bool, self.df.Precip)
+        inst_precip = inst_precip.where(~time_bool, self.df.Precip_accum)
         return inst_precip
     #--------------------------------------------------------------------------
 
