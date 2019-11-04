@@ -23,8 +23,6 @@ from timezonefinder import TimezoneFinder as tzf
 import xlrd
 import zipfile
 
-import pdb
-
 #------------------------------------------------------------------------------
 ### Remote configurations ###
 #------------------------------------------------------------------------------
