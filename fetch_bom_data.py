@@ -291,23 +291,30 @@ class bom_data_converter(object):
     
     #--------------------------------------------------------------------------    
     def get_dataframe(self, station_id):
-                
+        
+        """Make a dataframe and convert data to appropriate units"""
+        
         fname = os.path.join(self.file_directory, 
                              'HM01X_Data_{}.txt'.format(station_id))
         keep_cols = [12, 14, 16, 18, 20, 22, 24, 26]
         df = pd.read_csv(fname, skiprows = [0], low_memory = False)
-        new_cols = (df.columns[:7].tolist() + 
-                    ['year', 'month', 'day', 'hour', 'minute'] +
-                    df.columns[12:].tolist())
+        new_cols = (df.columns[:5].tolist() + 
+                    ['hour_local', 'minute_local', 'year', 'month', 'day', 
+                     'hour', 'minute'] + df.columns[12:].tolist())
         df.columns = new_cols
         df.index = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute']])
         df.index.name = 'time'
-        df = df.iloc[:, keep_cols]
         for var in df.columns: df[var] = pd.to_numeric(df[var], errors = 'coerce')
-        df.columns = ['Precip', 'Ta', 'Td', 'RH', 'Ws', 'Wd', 'Wg', 'ps']
+        local_time = (pd.to_numeric(df['hour_local'], errors='coerce') + 
+                      pd.to_numeric(df['minute_local'], errors='coerce') / 60) 
+        df = df.iloc[:, keep_cols]
+        df.columns = ['Precip_accum', 'Ta', 'Td', 'RH', 'Ws', 'Wd', 'Wg', 'ps']
+        df['local_time'] = local_time
         met_funcs = _met_funcs(df)
         df['q'] = met_funcs.get_q()
         df['Ah'] = met_funcs.get_Ah()
+        df['Precip'] = met_funcs.get_instantaneous_precip()
+        df.drop('Precip_accum', axis=1, inplace=True)
         df.ps = df.ps / 10
         return df
     #--------------------------------------------------------------------------
@@ -473,7 +480,17 @@ class _met_funcs(object):
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
+    def get_instantaneous_precip(self):
+        
+        inst_precip = self.df.Precip - self.df.Precip.shift()
+        time_bool = self.df.local_time / 9.5 == 1
+        inst_precip = inst_precip.where(~time_bool, self.df.Precip)
+        return inst_precip
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
     def get_q(self): 
+        
         Md = 0.02897   # molecular weight of dry air, kg/mol
         Mv = 0.01802   # molecular weight of water vapour, kg/mol    
         return Mv / Md * (0.01 * self.df.RH * self.get_es() / (self.df.ps / 10))
