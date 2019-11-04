@@ -6,7 +6,9 @@ Created on Fri Oct 25 15:16:21 2019
 @author: ian
 """
 
+import datetime as dt
 import numpy as np
+import os
 import pandas as pd
 import xarray as xr
 import pdb
@@ -29,17 +31,6 @@ def convert_Kelvin_to_celsius(s):
 def convert_pressure(df):
     
     return df.ps / 1000.0    
-#------------------------------------------------------------------------------
-
-#------------------------------------------------------------------------------
-#def convert_rainfall(df):
-#    
-#    s = df.Precip
-#    diff_s = s - s.shift()
-#    idx = np.mod(map(lambda x: x.hour, df.date_time_utc), 6)==0
-#    new_s = pd.Series(np.where(idx, s, diff_s), index = df.index)
-#    new_s.loc[new_s < 0.01] = 0
-#    return new_s
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -92,6 +83,19 @@ def get_wind_direction(df):
 def get_wind_speed(df):
     
     return np.sqrt(df.u**2 + df.v**2)
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def do_conversions(df):
+    
+    new_df = df[['Habl', 'Fsd', 'Fld', 'Fh', 'Fe', 'Precip']].copy()
+    for var in filter(lambda x: 'Ts' in x, df.columns):
+        new_df[var] = convert_Kelvin_to_celsius(df[var])
+    new_df['Ta'] = convert_Kelvin_to_celsius(df.Ta)
+    new_df['Rh'] = get_Rh(df)
+    new_df['Ah'] = get_Ah(df)
+    new_df = new_df.join(get_energy_components(df))
+    return new_df
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -152,30 +156,60 @@ funcs_dict = {'av_swsfcdown': [0, 1400],
               'abl_ht': [0, 5000]}
 #------------------------------------------------------------------------------
 
-path = '/home/ian/Desktop/Adelaide_River.nc'
-in_ds = xr.open_dataset(path)
+input_path = '/home/ian/Desktop/Adelaide_River.nc'
+in_ds = xr.open_dataset(input_path)
+
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+### BEGINNING OF CLASS SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+class access_data_getter(object):
+    
+    def __init__(self, site_name):
+        
+        self.site_name = site_name
+        
+
+    def open_raw_file(self):
+        
+        fname = '{}.nc'.format(self.site_name)
+        path = os.path.join(input_path, fname)
+        return xr.open_dataset(path)
+#------------------------------------------------------------------------------
+
 
 # Rename variables in row (longitude) major, column (latitude) minor format
-#df = pd.DataFrame(index = ds.time)
-out_ds = xr.Dataset(coords={'time': in_ds.time})
-
+results = []
 for i, this_lat in enumerate(in_ds.lat):
     for j, this_lon in enumerate(in_ds.lon):
+        new_df = pd.DataFrame(index = in_ds.time)         
         for var in vars_dict.keys():
             swap_var = vars_dict[var]
-            suffix = str(i) + str(j)
             if len(in_ds[var].dims) == 3:
-                this_var = '{}_{}'.format(swap_var, suffix)
-                out_ds[this_var] = ('time', screen_vars(in_ds[var].sel(lat=this_lat, 
-                                                                       lon=this_lon)))
+                new_df[swap_var] = screen_vars(in_ds[var].sel(lat=this_lat, 
+                                                              lon=this_lon))
             else:
-                for level in in_ds.soil_lvl:
-                    this_var = '{}_{}m_{}'.format(swap_var, 
-                                                  str(round(level.item(),2)),
-                                                  suffix)
-                    out_ds[this_var] = ('time', screen_vars(in_ds[var].sel(soil_lvl=level, 
-                                                                           lat=this_lat, 
-                                                                           lon=this_lon)))
-
-ds.close()
+                level = in_ds.soil_lvl[0]
+                new_df[swap_var] = screen_vars(in_ds[var].sel(soil_lvl=level, 
+                                                              lat=this_lat, 
+                                                              lon=this_lon))
+        attrs_dict = {'Latitude': this_lat.item(), 'Longitude': this_lon.item()}
+        conv_df = do_conversions(new_df)
+        conv_df.columns = ['{}_{}'.format(x, str(i) + str(j)) for x in 
+                           conv_df.columns]
+        conv_ds = conv_df.to_xarray()
+        for this_var in conv_df.columns: conv_ds[this_var].attrs = attrs_dict
+        results.append(conv_ds)
+out_ds = xr.merge(results)
+out_ds.attrs = {'nrecs': len(out_ds.time),
+                'start_date': dt.datetime.strftime(conv_df.index[0].to_pydatetime(), 
+                                                   '%Y-%m-%d %H:%M:%S'),
+                'end_date': dt.datetime.strftime(conv_df.index[-1].to_pydatetime(), 
+                                                   '%Y-%m-%d %H:%M:%S'),
+                'latitude': in_ds.lat[1].item(),
+                'longitude': in_ds.lon[1].item()}
+in_ds.close()
 
