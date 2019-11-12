@@ -8,8 +8,8 @@
 # forecast for the 7th hour, and then add that as the zero hour rainfall for
 # the next 6-hour period, and do so continuously
 
-#source /mnt/miniconda2/etc/profile.d/conda.sh
-#conda activate py36
+source /mnt/miniconda2/etc/profile.d/conda.sh
+conda activate py36
 
 # Initialise vars
 BASE_DIR="$1"
