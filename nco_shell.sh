@@ -3,13 +3,13 @@
 # Here we subset site data from continental-scale ACCESS files (by coords)
 # then concatenate to existing site files (placed into month folders);
 # the process is complicated by the fact that the ACCESS runs initialise at time
-# zero, so the rainfall for that time does not include the accumulated rainfall 
-# since the previous time period - the solution is to keep the rainfall 
-# forecast for the 7th hour, and then add that as the zero hour rainfall for 
+# zero, so the rainfall for that time does not include the accumulated rainfall
+# since the previous time period - the solution is to keep the rainfall
+# forecast for the 7th hour, and then add that as the zero hour rainfall for
 # the next 6-hour period, and do so continuously
 
-source /mnt/miniconda2/etc/profile.d/conda.sh
-conda activate py36
+#source /mnt/miniconda2/etc/profile.d/conda.sh
+#conda activate py36
 
 # Initialise vars
 BASE_DIR="$1"
@@ -25,11 +25,15 @@ LAT_HI=$(echo "$LATITUDE + $DELTA"|bc)
 LONG_LO=$(echo "$LONGITUDE - $DELTA"|bc)
 LONG_HI=$(echo "$LONGITUDE + $DELTA"|bc)
 
-echo Beginning netCDF processing with NCO
-echo "Running site" $SITE "; Base datetime:" $DATETIME
-
 # Enter base directory
 cd $BASE_DIR
+
+# Send output to log file
+exec 1>> Log_files/nco_shell.log 2>&1
+
+date
+echo Beginning netCDF processing with NCO
+echo "Running site" $SITE "; Base datetime:" $DATETIME
 
 # 1) Cut out SITE subset from continental file
 for entry in Continental_files/$DATETIME*.tmp
@@ -88,6 +92,6 @@ then
 else
     ncrcat --rec_apn temp012345.nc $MONTHLY_FILE
 fi
- 
+
 # 7) Remove all working files
 rm -r *
