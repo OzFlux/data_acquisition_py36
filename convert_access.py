@@ -26,11 +26,12 @@ class access_data_converter():
         self.site_name = site_details.name
         self.latitude = round(site_details.Latitude, 4)
         self.longitude = round(site_details.Longitude, 4)
+        self.time_step = site_details['Time step']
 
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def create_dataset(self, resample_to=False):
+    def create_dataset(self):
 
         fname = '{}.nc'.format(self.site_name.replace(' ',''))
         path = os.path.join(access_file_path, fname)
@@ -49,8 +50,8 @@ class access_data_converter():
                         df[swap_var] = _screen_vars(in_ds[var].sel(soil_lvl=level,
                                                                    lat=this_lat,
                                                                    lon=this_lon))
-                if resample_to:
-                    df = df.resample(resample_to).interpolate()
+                if self.time_step == 30:
+                    df = df.resample('30T').interpolate()
                 conv_ds = do_conversions(df).to_xarray()
                 _set_variable_attributes(conv_ds,
                                          round(this_lat.item(), 4),
@@ -66,9 +67,6 @@ class access_data_converter():
     #--------------------------------------------------------------------------
     def _set_global_attributes(self, ds):
 
-        freq = pd.infer_freq(ds.to_dataframe().index)
-        if freq == 'H' or '60T': time_step = 60
-        if freq == '30T': time_step = 30
         ds.attrs = {'nrecs': len(ds.time),
                     'start_date': (dt.datetime.strftime
                                    (pd.Timestamp(ds.time[0].item()),
@@ -79,17 +77,17 @@ class access_data_converter():
                     'latitude': self.latitude,
                     'longitude': self.longitude,
                     'site_name': self.site_name,
-                    'time_step': time_step,
+                    'time_step': self.time_step,
                     'xl_datemode': 0}
         ds.time.encoding = {'units': 'days since 1800-01-01',
                             '_FillValue': None}
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def write_to_netcdf(self, write_path, resample_to=False):
+    def write_to_netcdf(self, write_path):
 
         print('Writing netCDF file for site {}'.format(self.site_name))
-        dataset = self.create_dataset(resample_to=resample_to)
+        dataset = self.create_dataset()
         fname = '{}_ozflux_access.nc'.format(''.join(self.site_name.split(' ')))
         target = os.path.join(write_path, fname)
         dataset.to_netcdf(target, format='NETCDF4')
@@ -375,5 +373,8 @@ master_file_path = '/home/ian/Temp/site_master.xls'
 if __name__ == "__main__":
 
     sites_df = get_ozflux_site_list(master_file_path)
-
+    for site in sites_df.index[:1]:
+        site_details = sites_df.loc[site]
+        converter = access_data_converter(site_details)
+        converter.write_to_netcdf(access_file_path)
 #------------------------------------------------------------------------------
