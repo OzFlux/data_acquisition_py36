@@ -177,10 +177,10 @@ def wget_exec(read_path, write_path, server_dir):
 #------------------------------------------------------------------------------
 
 retrieval_path = 'http://opendap.bom.gov.au:8080/thredds/{}/bmrc/access-r-fc/ops/surface/'
-base_dir = '/home/ian/Desktop/access_test'
-#base_dir = '/rdsi/market/CloudStor/Shared/ACCESS'
-master_file_path = '/home/ian/Temp/site_master.xls'
-#master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
+#base_dir = '/home/ian/Desktop/access_test'
+base_dir = '/rdsi/market/CloudStor/Shared/ACCESS'
+#master_file_path = '/home/ian/Temp/site_master.xls'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
 # LOGGING CONFIGURATION
