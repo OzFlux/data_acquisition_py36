@@ -7,6 +7,7 @@ Created on Fri Oct 25 15:16:21 2019
 """
 
 import datetime as dt
+import glob
 import numpy as np
 import os
 import pandas as pd
@@ -33,9 +34,10 @@ class access_data_converter():
     #--------------------------------------------------------------------------
     def create_dataset(self):
 
-        fname = '{}.nc'.format(self.site_name.replace(' ',''))
-        path = os.path.join(access_file_path, fname)
-        in_ds = xr.open_dataset(path)
+#        fname = '{}.nc'.format(self.site_name.replace(' ',''))
+#        path = os.path.join(access_file_path, fname)
+#        in_ds = xr.open_dataset(path)
+        in_ds = self.get_raw_file()
         results = []
         for i, this_lat in enumerate(in_ds.lat):
             for j, this_lon in enumerate(in_ds.lon):
@@ -59,6 +61,20 @@ class access_data_converter():
         return out_ds
     #--------------------------------------------------------------------------
 
+    #--------------------------------------------------------------------------
+    def get_file_list(self):
+        
+        search_str = self.site_name.replace(' ', '_')
+        return sorted(glob.glob(access_file_path + 
+                                '/Monthly_files/**/{}*'.format(search_str)))
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def get_raw_file(self):
+        
+        return xr.open_mfdataset(self.get_file_list(), concat_dim='time')
+    #--------------------------------------------------------------------------
+    
     #--------------------------------------------------------------------------
     def _set_global_attributes(self, ds):
 
@@ -382,8 +398,9 @@ funcs_dict = {'av_swsfcdown': [0, 1400],
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-access_file_path = '/home/ian/Desktop'
-master_file_path = '/home/ian/Temp/site_master.xls'
+#access_file_path = '/home/ian/Desktop'
+access_file_path = '/rdsi/market/CloudStor/Shared/ACCESS'
+master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -401,5 +418,6 @@ if __name__ == "__main__":
     for site in sites_df.index[:1]:
         site_details = sites_df.loc[site]
         converter = access_data_converter(site_details)
+        out_path = os.path.join(access_file_path, 'OzFlux_files')
         converter.write_to_netcdf(access_file_path)
 #------------------------------------------------------------------------------
