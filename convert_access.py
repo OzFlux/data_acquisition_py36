@@ -21,13 +21,13 @@ import pdb
 #------------------------------------------------------------------------------
 class access_data_converter():
 
-    def __init__(self, site_details):
+    def __init__(self, site_details, return_soil_depths=False):
 
         self.site_name = site_details.name
         self.latitude = round(site_details.Latitude, 4)
         self.longitude = round(site_details.Longitude, 4)
         self.time_step = site_details['Time step']
-
+        self.return_soil_depths = return_soil_depths
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -39,17 +39,12 @@ class access_data_converter():
         results = []
         for i, this_lat in enumerate(in_ds.lat):
             for j, this_lon in enumerate(in_ds.lon):
-                df = pd.DataFrame(index=in_ds.time)
+                l = []
                 for var in vars_dict.keys():
-                    swap_var = vars_dict[var]
-                    if len(in_ds[var].dims) == 3:
-                        df[swap_var] = _screen_vars(in_ds[var].sel(lat=this_lat,
-                                                                   lon=this_lon))
-                    else:
-                        level = in_ds.soil_lvl[0]
-                        df[swap_var] = _screen_vars(in_ds[var].sel(soil_lvl=level,
-                                                                   lat=this_lat,
-                                                                   lon=this_lon))
+                    l += _get_data(in_ds, var, this_lat, this_lon,
+                                   self.return_soil_depths)
+                df = pd.concat(l, axis=1)
+                df.index = in_ds.time
                 if self.time_step == 30:
                     df = df.resample('30T').interpolate()
                 conv_ds = do_conversions(df).to_xarray()
@@ -121,6 +116,27 @@ def get_ozflux_site_list(master_file_path):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
+def _get_data(ds, var, lat, lon, return_soil_depths):
+
+    swap_var = vars_dict[var]
+    if len(ds[var].dims) == 3:
+        return [pd.Series(_screen_vars(ds[var].sel(lat=lat, lon=lon)),
+                          name=swap_var)]
+    else:
+        if return_soil_depths:
+            l = []
+            for this_dim in ds.soil_lvl:
+                name = '{}_{}m'.format(swap_var, str(round(this_dim.item(), 2)))
+                l.append(pd.Series(_screen_vars(ds[var].sel(soil_lvl=this_dim,
+                                                lat=lat, lon=lon)), name=name))
+            return l
+        else:
+            return [pd.Series(_screen_vars(ds[var].sel(soil_lvl=ds.soil_lvl[0],
+                                                       lat=lat, lon=lon)),
+                              name=swap_var)]
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 def _get_var_attrs(var):
 
     """Make a dictionary of attributes for passed variable"""
@@ -166,6 +182,10 @@ def _get_var_attrs(var):
                         'units': 'C'},
                  'Ts': {'long_name': 'soil temperature',
                         'units': 'C'},
+                 'u': {'long_name': '10m wind u component',
+                       'units': 'm s-1'},
+                 'v': {'long_name': '10m wind v component',
+                       'units': 'm s-1'},
                  'Wd': {'long_name': 'Wind direction',
                         'units': 'degT'},
                  'Ws': {'long_name': 'Wind speed',
@@ -201,7 +221,10 @@ def _set_variable_attributes(ds, latitude, longitude):
 
     for this_var in list(ds.variables):
         if this_var == 'time': continue
-        var_attrs = _get_var_attrs(this_var)
+        try:
+            var_attrs = _get_var_attrs(this_var)
+        except KeyError:
+            var_attrs = _get_var_attrs(this_var.split('_')[0])
         var_attrs.update({'latitude': latitude,
                           'longitude': longitude})
         ds[this_var].attrs = var_attrs
@@ -278,9 +301,11 @@ def get_wind_speed(df):
 #------------------------------------------------------------------------------
 def do_conversions(df):
 
-    new_df = df[['Habl', 'Fsd', 'Fld', 'Fh', 'Fe', 'Precip']].copy()
-    for var in filter(lambda x: 'Ts' in x, df.columns):
-        new_df[var] = convert_Kelvin_to_celsius(df[var])
+    Sws_list = list(filter(lambda x: 'Sws' in x, df.columns))
+    Ts_list = list(filter(lambda x: 'Ts' in x, df.columns))
+    full_list = ['Habl', 'Fsd', 'Fld', 'Fh', 'Fe', 'Precip', 'u', 'v'] + Sws_list
+    new_df = df[full_list].copy()
+    for var in Ts_list: new_df[var] = convert_Kelvin_to_celsius(df[var])
     new_df['Ta'] = convert_Kelvin_to_celsius(df.Ta)
     new_df['RH'] = get_Rh(df)
     new_df['Ah'] = get_Ah(df)
