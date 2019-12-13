@@ -47,23 +47,23 @@ master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 
 #------------------------------------------------------------------------------
 class bom_data_getter(object):
-    
+
     def __init__(self):
-        
+
         self.stations = get_aws_station_details(with_timezone = True)
         self.file_format = get_data_file_formatting()
         self._zfile, self._empty_files = get_ftp_data(list_missing = True)
 
     #--------------------------------------------------------------------------
     def _check_line_integrity(self, line):
-        
-        """Check line length and number of elements are as expected, and that 
+
+        """Check line length and number of elements are as expected, and that
            final character is #"""
-        
+
         # Set values for validity checks
         line_len = 161
-        element_n = 33   
-    
+        element_n = 33
+
         # Do checks
         line_list = line.decode().split(',')
         try:
@@ -77,16 +77,16 @@ class bom_data_getter(object):
 
     #--------------------------------------------------------------------------
     def _generate_dummy_line(self, station_id, datetime):
-    
-        """Write out a line of dummy data with correct spacing and site 
+
+        """Write out a line of dummy data with correct spacing and site
            details, but no met data"""
-        
+
         station_details = self.stations.loc[station_id]
         start_list = ['dd', station_id, station_details.station_name.zfill(40)]
         try:
-            local_datetime = self.get_local_datetime(datetime, 
+            local_datetime = self.get_local_datetime(datetime,
                                                      station_details.timezone)
-            local_datetime_str = dt.datetime.strftime(local_datetime, 
+            local_datetime_str = dt.datetime.strftime(local_datetime,
                                                       '%Y,%m,%d,%H,%M')
         except UnknownTimeZoneError:
             local_datetime_str = '    ,  ,  ,  ,  '
@@ -94,15 +94,15 @@ class bom_data_getter(object):
         start_list.append(dt.datetime.strftime(datetime, '%Y,%m,%d,%H,%M'))
         blank_list = [' ' * x for x in self.file_format.Byte_length]
         new_str = ','.join((start_list + blank_list[5: -1] + ['#\r\n']))
-        return self._set_line_order(new_str)                        
+        return self._set_line_order(new_str)
     #--------------------------------------------------------------------------
 
     #------------------------------------------------------------------------------
     def get_dataframe(self, station_id):
-    
-        """Convert zipfile read from ftp site to dataframe (just index and 
+
+        """Convert zipfile read from ftp site to dataframe (just index and
            data string) with dummy spaces"""
-        
+
         readfile_name = self.get_file_id_dict()[station_id]
         header_line = 0
         with self._zfile.open(readfile_name) as zf:
@@ -111,15 +111,15 @@ class bom_data_getter(object):
         for line in content[header_line + 1:]:
             if self._check_line_integrity(line):
                 new_line = self._set_line_order(line)
-                valid_data.append(new_line)        
+                valid_data.append(new_line)
         if len(valid_data) == 0: return None
         dtstr_list = [','.join(x.split(',')[7: 12]) for x in valid_data]
         dt_list = [dt.datetime.strptime(x, '%Y,%m,%d,%H,%M') for x in dtstr_list]
         valid_df = pd.DataFrame(valid_data, index = dt_list, columns = ['Data'])
         new_index = pd.date_range(valid_df.index[0], valid_df.index[-1], freq = '30T')
-        missing_dates = [x.to_pydatetime() for x in new_index 
+        missing_dates = [x.to_pydatetime() for x in new_index
                          if not x in valid_df.index]
-        dummy_data = [self._generate_dummy_line(station_id, x) 
+        dummy_data = [self._generate_dummy_line(station_id, x)
                       for x in missing_dates]
         dummy_df = pd.DataFrame(dummy_data, index = missing_dates, columns = ['Data'])
         df = pd.concat([valid_df, dummy_df])
@@ -129,35 +129,35 @@ class bom_data_getter(object):
 
     #--------------------------------------------------------------------------
     def get_details_string(self, station_id):
-        
-        """Make a string with relevant details to be written into text file 
+
+        """Make a string with relevant details to be written into text file
            header"""
-        
+
         name = self.stations.loc[station_id, 'station_name'].rstrip()
         state = self.stations.loc[station_id, 'State'].rstrip()
         name_state = '{0} ({1})'.format(name, state)
         lat = str(self.stations.loc[station_id, 'lat'])
         lon = str(self.stations.loc[station_id, 'lon'])
         coords = 'Coords: lat = {}, long = +{}'.format(lat, lon)
-        elev = 'Elev: {}m asl'.format(self.stations.loc[station_id, 
+        elev = 'Elev: {}m asl'.format(self.stations.loc[station_id,
                                                         'height_stn_asl'].lstrip())
         return ', '.join([name_state, coords, elev]) + '\n'
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def get_file_id_dict(self):
-        
+
         """Get a dictionary referencing the file name by key of BOM site ID"""
-        
+
         data_list = [x for x in self._zfile.namelist() if 'Data' in x]
-        return dict(zip([x.split('_')[2] for x in data_list], data_list)) 
+        return dict(zip([x.split('_')[2] for x in data_list], data_list))
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def get_header_string(self, as_list = False):
-    
+
         """Get formatted header list for the output file"""
-        
+
         headers = self.file_format.Description.tolist()
         new_headers = headers[:2] + headers[3:9] + headers[11:]
         new_headers[0] = new_headers[0].split('-')[0].rstrip()
@@ -173,40 +173,40 @@ class bom_data_getter(object):
 
     #------------------------------------------------------------------------------
     def get_local_datetime(self, dt_obj, tz_name):
-        
+
         """Convert standard local datetime to local datetime using timezone"""
-        
+
         tz_obj = timezone(tz_name)
         try:
             dst_offset = tz_obj.dst(dt_obj)
         except:
             dst_offset = tz_obj.dst(dt_obj + dt.timedelta(seconds = 3600))
-        return dt_obj + dst_offset 
+        return dt_obj + dst_offset
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def _get_write_list(self, station_id, file_dir):
-    
+
         """Compare the local file content with the content from the ftp server,
            and keep all lines that are missing from the local (add dummy lines)
            if there is a gap"""
-        
+
         # Get ftp data
         ftp_content = self.get_dataframe(station_id)
-        
+
         # Get local data
-        local_filepath = os.path.join(file_dir, 
+        local_filepath = os.path.join(file_dir,
                                       'HM01X_Data_{}.txt'.format(station_id))
         try:
             with open(local_filepath) as f:
                 print('Existing file found in path; appending new remote data...')
-                local_content = f.readlines()                    
+                local_content = f.readlines()
         except FileNotFoundError:
             print ('No local file found; writing all available '
                    'remote data to local directory...'.format(station_id))
-            return ([self.get_details_string(station_id)] + 
+            return ([self.get_details_string(station_id)] +
                     [self.get_header_string()] + ftp_content.Data.tolist())
-        
+
         # Retain remote data not found in local file and pad dummy cases if
         # there is a gap
         last_date_str = ','.join(local_content[-1].split(',')[7:12])
@@ -218,30 +218,30 @@ class bom_data_getter(object):
             int_loc = ftp_content.index.get_loc(last_date)
             write_list = ftp_content.iloc[int_loc + 1:]['Data'].tolist()
         except KeyError:
-            date_range = (pd.date_range(last_date, ftp_content.index[0], 
+            date_range = (pd.date_range(last_date, ftp_content.index[0],
                                         freq = '30T')
                           .to_pydatetime())[1:-1]
-            write_list = [self._generate_dummy_line(station_id, x) 
+            write_list = [self._generate_dummy_line(station_id, x)
                           for x in date_range] + ftp_content.Data.tolist()
         return write_list
     #------------------------------------------------------------------------------
 
     #------------------------------------------------------------------------------
     def report_empty_files(self, station_names = True):
-        
+
         """Return list of files that contained no data"""
-        
+
         id_list = sorted([x.split('_')[2] for x in self._empty_files])
         if not station_names: return id_list
-        return list(zip(id_list, [self.stations.loc[i, 'station_name'].rstrip() 
+        return list(zip(id_list, [self.stations.loc[i, 'station_name'].rstrip()
                                   for i in id_list]))
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def _set_line_order(self, line):
-    
+
         """Drop wet bulb temperature and convert wind speed"""
-        
+
         def convert_kmh_2_ms(kmh):
             try:
                 return str(round(float(kmh) / 3.6, 1)).rjust(5)
@@ -254,58 +254,58 @@ class bom_data_getter(object):
         line_list[27] = convert_kmh_2_ms(line_list[27])
         return ','.join(line_list[:2] + line_list[3:17] + line_list[19:])
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def write_to_text_file(self, write_path, station_id = None):
-        
+
         """Write data to text file (append only new data if file exists)"""
-        
+
         if station_id:
             station_list = [station_id]
         else:
             station_list = sorted(self.get_file_id_dict().keys())
         for this_station in station_list:
             print ('Updating file for station ID {}'.format(this_station))
-            local_filepath = os.path.join(write_path, 
+            local_filepath = os.path.join(write_path,
                                           'HM01X_Data_{}.txt'.format(this_station))
             data_to_write = self._get_write_list(this_station, write_path)
             if not data_to_write: continue
-            with open(local_filepath, 'a+') as f:                
+            with open(local_filepath, 'a+') as f:
                 f.writelines(data_to_write)
-    #--------------------------------------------------------------------------                
+    #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 class bom_data_converter(object):
-    
-    """Converts the raw text files into dataframe, xarray Dataset and 
+
+    """Converts the raw text files into dataframe, xarray Dataset and
        netCDF"""
-    
+
     def __init__(self):
-        
+
         self.file_directory = aws_file_path
         self.stations = get_aws_station_details()
         self.ozflux_sites = get_ozflux_site_list(master_file_path)
-    
-    #--------------------------------------------------------------------------    
+
+    #--------------------------------------------------------------------------
     def get_dataframe(self, station_id):
-        
+
         """Make a dataframe and convert data to appropriate units"""
-        
-        fname = os.path.join(self.file_directory, 
+
+        fname = os.path.join(self.file_directory,
                              'HM01X_Data_{}.txt'.format(station_id))
         keep_cols = [12, 14, 16, 18, 20, 22, 24, 26]
         df = pd.read_csv(fname, skiprows = [0], low_memory = False)
-        new_cols = (df.columns[:5].tolist() + 
-                    ['hour_local', 'minute_local', 'year', 'month', 'day', 
+        new_cols = (df.columns[:5].tolist() +
+                    ['hour_local', 'minute_local', 'year', 'month', 'day',
                      'hour', 'minute'] + df.columns[12:].tolist())
         df.columns = new_cols
         df.index = pd.to_datetime(df[['year', 'month', 'day', 'hour', 'minute']])
         df.index.name = 'time'
         for var in df.columns: df[var] = pd.to_numeric(df[var], errors = 'coerce')
-        local_time = (pd.to_numeric(df['hour_local'], errors='coerce') + 
-                      pd.to_numeric(df['minute_local'], errors='coerce') / 60) 
+        local_time = (pd.to_numeric(df['hour_local'], errors='coerce') +
+                      pd.to_numeric(df['minute_local'], errors='coerce') / 60)
         df = df.iloc[:, keep_cols]
         df.columns = ['Precip_accum', 'Ta', 'Td', 'RH', 'Ws', 'Wd', 'Wg', 'ps']
         df['local_time'] = local_time
@@ -317,27 +317,27 @@ class bom_data_converter(object):
         df.ps = df.ps / 10
         return df
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def get_dataset(self, site_name, downsample = False):
-        
+
         """Collate data from individual BOM sites in xarray dataset"""
-        
+
         ### This may fail because all stations get returned in the stations list
         ### but some have no data on the ftp site - to fix
-        
+
         # Find closest stations (that were established before the flux site)
         start_year = self.ozflux_sites.loc[site_name, 'Start year']
         lat = self.ozflux_sites.loc[site_name, 'Latitude']
         lon = self.ozflux_sites.loc[site_name, 'Longitude']
         valid_stations = self.stations.copy()
-        valid_stations['year_opened'] = list(map(lambda x: int(x.split('/')[-1]), 
+        valid_stations['year_opened'] = list(map(lambda x: int(x.split('/')[-1]),
                                                  self.stations.month_year_opened))
         valid_stations = valid_stations.loc[valid_stations.year_opened < start_year]
-        nearest_stations = get_nearest_bom_station(lat, lon, 
-                                                   stations = valid_stations, 
+        nearest_stations = get_nearest_bom_station(lat, lon,
+                                                   stations = valid_stations,
                                                    nearest_n = 3)
-        
+
         # Get the dataframes for each BOM AWS site and concatenate
         df_list = []
         for i, station_id in enumerate(nearest_stations.index):
@@ -346,17 +346,17 @@ class bom_data_converter(object):
             sub_df.columns = ['{}_{}'.format(x, str(i)) for x in sub_df.columns]
             df_list.append(sub_df)
         df = pd.concat(df_list, axis = 1)
-        df = df.loc[str(start_year):]   
+        df = df.loc[str(start_year):]
         dataset = df.to_xarray()
 
         # Generate variable attribute dictionaries and write to xarray dataset
         for var in df.columns:
             dataset[var].attrs = self._get_var_attrs(var, nearest_stations)
-        
+
         # Generate global attribute dictionaries and write to xarray dataset
         dataset.attrs = self._get_global_attrs(site_name, df)
-        
-        # Set encoding (note should be able to assign a dict to dataset.encoding 
+
+        # Set encoding (note should be able to assign a dict to dataset.encoding
         # rather than iterating over vars but doesn't seem to work)
         dataset.time.encoding = {'units': 'days since 1800-01-01',
                                  '_FillValue': None}
@@ -369,10 +369,10 @@ class bom_data_converter(object):
     def _get_global_attrs(self, site_name, df):
 
         """Make a dictionary of global attributes"""
-        
+
         start_date = dt.datetime.strftime(df.index[0], '%Y-%m-%d %H:%M:%S')
         end_date = dt.datetime.strftime(df.index[-1], '%Y-%m-%d %H:%M:%S')
-        run_datetime = dt.datetime.strftime(dt.datetime.now(), 
+        run_datetime = dt.datetime.strftime(dt.datetime.now(),
                                             '%Y-%m-%d %H:%M:%S')
         return {'latitude': str(round(self.ozflux_sites.loc[site_name, 'Latitude'], 4)),
                 'longitude': str(round(self.ozflux_sites.loc[site_name, 'Longitude'], 4)),
@@ -384,9 +384,9 @@ class bom_data_converter(object):
 
     #--------------------------------------------------------------------------
     def _get_var_attrs(self, var, nearest_stations):
-        
+
         """Make a dictionary of attributes for passed variable"""
-        
+
         vars_dict = {'Ah': {'long_name': 'Absolute humidity',
                             'units': 'g/m3'},
                      'Precip': {'long_name': 'Precipitation total over time step',
@@ -407,10 +407,10 @@ class bom_data_converter(object):
                             'units': 'm/s'},
                      'Wg': {'long_name': 'Wind gust',
                             'units': 'm/s'}}
-                     
+
         generic_dict = {'instrument': '', 'valid_range': (-1e+35,1e+35),
-                        'missing_value': -9999, 'height': '', 
-                        'standard_name': '', 'group_name': '', 
+                        'missing_value': -9999, 'height': '',
+                        'standard_name': '', 'group_name': '',
                         'serial_number': ''}
 
         l = var.split('_')
@@ -424,9 +424,9 @@ class bom_data_converter(object):
 
     #--------------------------------------------------------------------------
     def get_downsampled_dataframe(self, station_id):
-        
+
         """Downsample to 1 hour"""
-        
+
         df = self.get_dataframe(station_id)
         met_funcs = _met_funcs(df)
         df['u'], df['v'] = met_funcs.get_uv_from_wswd()
@@ -442,10 +442,10 @@ class bom_data_converter(object):
         downsample_df['Wg'] = gust_series.resample('60T').max()
         return downsample_df
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def write_to_netcdf(self, site_name, write_path, downsample = False):
-        
+
         print ('Writing netCDF file for site {}'.format(site_name))
         dataset = self.get_dataset(site_name, downsample = downsample)
         fname = '{}_AWS.nc'.format(''.join(site_name.split(' ')))
@@ -457,20 +457,20 @@ class bom_data_converter(object):
 
 #------------------------------------------------------------------------------
 class _met_funcs(object):
-    
+
     """Simple meteorological conversions"""
-    
+
     def __init__(self, df):
-        
+
         self.df = df
-    
+
     #--------------------------------------------------------------------------
-    def get_Ah(self): return (self.get_e() * 10**3 / 
+    def get_Ah(self): return (self.get_e() * 10**3 /
                               ((self.df.Ta + 273.15) * 8.3143 / 18))
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def get_es(self): return (0.6106 * np.exp(17.27 * self.df.Ta / 
+    def get_es(self): return (0.6106 * np.exp(17.27 * self.df.Ta /
                               (self.df.Ta + 237.3)))
     #--------------------------------------------------------------------------
 
@@ -480,7 +480,7 @@ class _met_funcs(object):
 
     #--------------------------------------------------------------------------
     def get_instantaneous_precip(self):
-        
+
         inst_precip = self.df.Precip_accum - self.df.Precip_accum.shift()
         time_bool = self.df.local_time / 9.5 == 1
         inst_precip = inst_precip.where(~time_bool, self.df.Precip_accum)
@@ -488,13 +488,13 @@ class _met_funcs(object):
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def get_q(self): 
-        
+    def get_q(self):
+
         Md = 0.02897   # molecular weight of dry air, kg/mol
-        Mv = 0.01802   # molecular weight of water vapour, kg/mol    
+        Mv = 0.01802   # molecular weight of water vapour, kg/mol
         return Mv / Md * (0.01 * self.df.RH * self.get_es() / (self.df.ps / 10))
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def _us_to_from_compass(self, dctn):
         bool_idx = dctn > 90
@@ -502,19 +502,19 @@ class _met_funcs(object):
         dctn.loc[~bool_idx] = 90 - dctn.loc[~bool_idx]
         return dctn
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def get_uv_from_wswd(self):
-        
+
         us_wd = self._us_to_from_compass(self.df.Wd)
         u = self.df.Ws * np.cos(np.radians(us_wd))
         v = self.df.Ws * np.sin(np.radians(us_wd))
         return u, v
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def get_wswd_from_uv(self):
-    
+
         ws = np.sqrt(self.df.u**2 + self.df.v**2)
         wd = np.degrees(np.arctan2(self.df.v, self.df.u))
         bool_idx = wd < 0
@@ -523,7 +523,7 @@ class _met_funcs(object):
     #--------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-        
+
 #------------------------------------------------------------------------------
 ### END OF CLASS SECTION ###
 #------------------------------------------------------------------------------
@@ -534,10 +534,10 @@ class _met_funcs(object):
 
 #------------------------------------------------------------------------------
 def get_aws_station_details(with_timezone = False):
-    
-    """Retrieves a dataframe containing details of all AWS stations on the 
+
+    """Retrieves a dataframe containing details of all AWS stations on the
        OzFlux ftp server site"""
-       
+
     zf = get_ftp_data(['StnDet'], get_first = False)
     data_list = []
     for f in zf.namelist():
@@ -554,7 +554,7 @@ def get_aws_station_details(with_timezone = False):
     df.index = df['station_id']
     df['station_name'] = [x.rstrip() for x in df.station_name]
     if with_timezone:
-        df['timezone'] = [get_timezone(df.loc[idx, 'lat'], df.loc[idx, 'lon']) 
+        df['timezone'] = [get_timezone(df.loc[idx, 'lat'], df.loc[idx, 'lon'])
                           for idx in df.index]
     return df.sort_index()
 #------------------------------------------------------------------------------
@@ -562,15 +562,15 @@ def get_aws_station_details(with_timezone = False):
 #------------------------------------------------------------------------------
 def get_data_file_formatting():
 
-    """Gets the file format for the data files on the OzFlux-specific ftp 
+    """Gets the file format for the data files on the OzFlux-specific ftp
        server"""
-    
+
     zf = get_ftp_data(search_list = ['Notes'])
     with zf.open(zf.namelist()[0]) as file_obj:
         notes_list = file_obj.readlines()
     bad_chars = '*_-.'
     start_line = 19
-    end_line = 44    
+    end_line = 44
     byte_start = ['Byte_start']
     byte_length = ['Byte_length']
     desc = ['Description']
@@ -578,37 +578,37 @@ def get_data_file_formatting():
         line_list = [x.strip() for x in line.decode().split(',')]
         byte_start.append(int(line_list[0].split('-')[0]))
         byte_length.append(int(line_list[1]))
-        if i > 1: line_list[2] = line_list[2].translate({ord(c): None for c in 
+        if i > 1: line_list[2] = line_list[2].translate({ord(c): None for c in
                                                          bad_chars})
         if len(line_list) > 2: line_list[2] = ','.join(line_list[2:])
         desc.append(line_list[2].rstrip('.').lstrip())
     return pd.DataFrame({byte_start[0]: byte_start[1:],
                          byte_length[0]: byte_length[1:],
                          desc[0]: desc[1:]})
-#------------------------------------------------------------------------------        
+#------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 def get_ftp_data(search_list = None, get_first = True, list_missing = False):
-    
-    """Function to retrieve zipfile containing data files for AWS stations 
+
+    """Function to retrieve zipfile containing data files for AWS stations
        on OzFlux ftp server site
-       Args: 
-           * search_list (list or None, default None): specifies substrings 
-             used to search for matching file names (if None returns all data 
+       Args:
+           * search_list (list or None, default None): specifies substrings
+             used to search for matching file names (if None returns all data
              available)
            * get_first (boolean, default True): if true, returns only the first
              file with matching substring"""
-       
-    # Login to ftp server      
+
+    # Login to ftp server
     ftp = ftplib.FTP(ftp_server)
-    ftp.login()   
-    
-    # Open the separate zip files and combine in a single zip file 
+    ftp.login()
+
+    # Open the separate zip files and combine in a single zip file
     # held in dynamic memory - ignore the solar data
     missing_list = []
-    master_bio = BytesIO() 
+    master_bio = BytesIO()
     master_zf = zipfile.ZipFile(master_bio, 'w')
-    zip_file_list = [os.path.split(f)[1] for f in ftp.nlst(ftp_dir)]   
+    zip_file_list = [os.path.split(f)[1] for f in ftp.nlst(ftp_dir)]
     for this_file in zip_file_list:
         if 'globalsolar' in this_file: continue
         in_file = os.path.join(ftp_dir, this_file)
@@ -622,7 +622,7 @@ def get_ftp_data(search_list = None, get_first = True, list_missing = False):
             for this_str in search_list:
                 if not isinstance(this_str, str):
                     raise TypeError('search_list elements must be of type str!')
-                for f in zf.namelist(): 
+                for f in zf.namelist():
                     if this_str in f:
                         file_list.append(f)
                         if get_first: search_list.remove(this_str)
@@ -645,15 +645,15 @@ def get_ftp_data(search_list = None, get_first = True, list_missing = False):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_nearest_bom_station(lat, lon, stations = None, current = True, 
+def get_nearest_bom_station(lat, lon, stations = None, current = True,
                             nearest_n = 5):
-    
+
     """Uses haversine formula to estimate distance from given coordinates
        to nearest x stations"""
-    
+
     if stations is None: stations = get_aws_station_details()
-    stations['dist (km)'] = list(map(lambda x: haversine(lat, lon, 
-                                                         stations.loc[x, 'lat'], 
+    stations['dist (km)'] = list(map(lambda x: haversine(lat, lon,
+                                                         stations.loc[x, 'lat'],
                                                          stations.loc[x, 'lon']),
                                      stations.index))
     if current:
@@ -666,18 +666,18 @@ def get_nearest_bom_station(lat, lon, stations = None, current = True,
 #------------------------------------------------------------------------------
 def get_station_details_formatting(truncate_description = True):
 
-    """Gets the file format for the station details file on the ozflux-specific 
+    """Gets the file format for the station details file on the ozflux-specific
        ftp server"""
-    
-    simple_list = ['record_id', 'station_id', 'rainfall_district_id', 
+
+    simple_list = ['record_id', 'station_id', 'rainfall_district_id',
                     'station_name', 'month_year_opened', 'month_year_closed',
-                    'lat', 'lon', 'coords_derivation', 'State', 
-                    'height_stn_asl', 'height_barom_asl', 'wmo_id', 
+                    'lat', 'lon', 'coords_derivation', 'State',
+                    'height_stn_asl', 'height_barom_asl', 'wmo_id',
                     'first_file_year', 'last_file_year', 'pct_complete',
                     'pct_vals_Y', 'pct_vals_N', 'pct_vals_W', 'pct_vals_S',
                     'pct_vals_I', 'eor']
-    start_line = 207
-    end_line = 229    
+    start_line = 348
+    end_line = 370
     zf = get_ftp_data(search_list = ['Notes'])
     with zf.open(zf.namelist()[0]) as file_obj:
         notes_list = file_obj.readlines()
@@ -714,11 +714,11 @@ def get_ozflux_site_list(master_file_path):
 
 #------------------------------------------------------------------------------
 def get_timezone(lat, lon):
-    
+
     """Get timezone for coordinates"""
-    
+
     def make_tz_request(lat, lon):
-    
+
         api_key = 'UT66CKBKU8MM'
         base_url_str = 'http://api.timezonedb.com/v2.1/get-time-zone'
         end_str = ('?key={0}&format=json&by=position&lat={1}&lng={2}'
@@ -727,10 +727,10 @@ def get_timezone(lat, lon):
         json_obj = requests.get(base_url_str + end_str)
         if json_obj.status_code == 200:
             return json.loads(json_obj.content)
-        else: 
+        else:
             print ('Timezone request returned status code {}'
                    .format(json_obj.status_code))
-    
+
     # Create a timezone variable using lookup from python package, fall back
     # on API
     tz = tzf().timezone_at(lng = lon, lat = lat)
@@ -739,25 +739,25 @@ def get_timezone(lat, lon):
     if tz: return tz
     return None
 #------------------------------------------------------------------------------
-    
+
 #------------------------------------------------------------------------------
 def haversine(lat1, lon1, lat2, lon2):
-    
+
     """
-    Calculate the great circle distance between two points 
+    Calculate the great circle distance between two points
     on the earth (specified in decimal degrees)
     """
 
-    # convert decimal degrees to radians 
+    # convert decimal degrees to radians
     lon1, lat1, lon2, lat2 = map(math.radians, [lon1, lat1, lon2, lat2])
 
-    # haversine formula 
-    dlon = lon2 - lon1 
-    dlat = lat2 - lat1 
-    a = (math.sin(dlat / 2)**2 + math.cos(lat1) * 
+    # haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = (math.sin(dlat / 2)**2 + math.cos(lat1) *
          math.cos(lat2) * math.sin(dlon / 2)**2)
     r = 6371 # Radius of earth in kilometers
-    c = 2 * math.asin(math.sqrt(a)) 
+    c = 2 * math.asin(math.sqrt(a))
     return c * r
 #------------------------------------------------------------------------------
 
@@ -772,7 +772,7 @@ def haversine(lat1, lon1, lat2, lon2):
 #------------------------------------------------------------------------------
 if __name__ == "__main__":
 
-    # Get BOM data class and write ftp data to text file    
+    # Get BOM data class and write ftp data to text file
     aws = bom_data_getter()
     aws.write_to_text_file(aws_file_path)
 
@@ -781,16 +781,16 @@ if __name__ == "__main__":
     conv_class = bom_data_converter()
     site_list = list(conv_class.ozflux_sites.index)
     for site in site_list:
-        if conv_class.ozflux_sites.loc[site, 'Time step'] == 30: 
+        if conv_class.ozflux_sites.loc[site, 'Time step'] == 30:
             downsample = False
         else:
             downsample = True
         conv_class.write_to_netcdf(site, nc_path, downsample)
 #------------------------------------------------------------------------------
-        
+
 #------------------------------------------------------------------------------
 #def get_header_list():
-#        
+#
 #    l = ['hm',
 #         'Station Number',
 #         'Year Month Day Hour Minutes in YYYY,MM,DD,HH24,MI format in Local time',
@@ -813,20 +813,20 @@ if __name__ == "__main__":
 #         'Quality of station level pressure',
 #         'AWS Flag',
 #         '#\r\n']
-#         
+#
 #    return [','.join(l)]
 
 #------------------------------------------------------------------------------
 
 ##------------------------------------------------------------------------------
 #def get_ftp_files():
-#    
+#
 #    ftp = ftplib.FTP(ftp_server)
 #    ftp.login()
 #    zip_file_list = [os.path.split(f)[1] for f in ftp.nlst(ftp_dir)]
 #    d = {}
 #    for fname in zip_file_list:
-#        in_file = os.path.join(ftp_dir, fname)    
+#        in_file = os.path.join(ftp_dir, fname)
 #        f_str = 'RETR {0}'.format(in_file)
 #        bio = BytesIO()
 #        ftp.retrbinary(f_str, bio.write)
