@@ -33,9 +33,6 @@ class access_data_converter():
     #--------------------------------------------------------------------------
     def create_dataset(self):
 
-#        fname = '{}.nc'.format(self.site_name.replace(' ',''))
-#        path = os.path.join(access_file_path, fname)
-#        in_ds = xr.open_dataset(path)
         in_ds = self.get_raw_file()
         results = []
         for i, this_lat in enumerate(in_ds.lat):
@@ -48,8 +45,7 @@ class access_data_converter():
                 df.index = in_ds.time.data
                 df.index.name = 'time'
                 df = df.loc[~df.index.duplicated()]
-                if self.time_step == 30:
-                    df = df.resample('30T').interpolate()
+                df.index = in_ds.time
                 conv_ds = do_conversions(df).to_xarray()
                 _set_variable_attributes(conv_ds,
                                          round(this_lat.item(), 4),
@@ -57,25 +53,27 @@ class access_data_converter():
                 _rename_variables(conv_ds, i, j)
                 results.append(conv_ds)
         in_ds.close()
-        out_ds = xr.merge(results)
+        merge_ds = xr.merge(results)
+        if self.time_step_step == 30: out_ds = _resample_dataset(merge_ds)
+        else: out_ds = merge_ds
         self._set_global_attributes(out_ds)
         return out_ds
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def get_file_list(self):
-        
+
         search_str = self.site_name.replace(' ', '_')
-        return sorted(glob.glob(access_file_path + 
+        return sorted(glob.glob(access_file_path +
                                 '/Monthly_files/**/{}*'.format(search_str)))
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
     def get_raw_file(self):
-        
+
         return xr.open_mfdataset(self.get_file_list(), concat_dim='time')
     #--------------------------------------------------------------------------
-    
+
     #--------------------------------------------------------------------------
     def _set_global_attributes(self, ds):
 
@@ -144,7 +142,7 @@ def _get_data(ds, var, lat, lon, return_soil_depths):
         for this_dim in ds.soil_lvl:
             name = '{}_{}m'.format(swap_var, str(round(this_dim.item(), 2)))
             l.append(pd.Series(_screen_vars(ds[var].sel(soil_lvl=this_dim,
-                                                        lat=lat, lon=lon)), 
+                                                        lat=lat, lon=lon)),
                                name=name))
         return l
     return [pd.Series(_screen_vars(ds[var].sel(soil_lvl=ds.soil_lvl[0],
@@ -173,6 +171,19 @@ def _rename_variables(ds, i, j):
     name_swap_dict = {x: '{}_{}'.format(x, str(i) + str(j))
                       for x in var_list}
     ds.rename(name_swap_dict, inplace=True)
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def _resample_dataset(ds):
+
+    precip_list = [x for x in ds if 'Precip' in x]
+    no_precip_list = [x for x in ds if not 'Precip' in x]
+    precip_ds = ds[precip_list]
+    no_precip_ds = ds[no_precip_list].resample(time='30T').interpolate('linear')
+    for var in precip_ds:
+        cuml_precip = precip_ds[var].cumsum()
+        cuml_precip = cuml_precip.resample(time='30T').interpolate('linear')
+        no_precip_ds[var] = cuml_precip - cuml_precip.shift()
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -214,8 +225,8 @@ def convert_pressure(df):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_Ah(df): 
-    
+def get_Ah(df):
+
     return get_e(df) * 10**3 / ((df.Ta * 8.3143) / 18)
 #------------------------------------------------------------------------------
 
@@ -244,7 +255,7 @@ def get_es(df):
 
     return 0.6106 * np.exp(17.27 * (df.Ta - 273.15) / ((df.Ta - 273.15)  + 237.3))
 #------------------------------------------------------------------------------
-    
+
 #------------------------------------------------------------------------------
 def get_Rh(df):
 
@@ -423,6 +434,6 @@ if __name__ == "__main__":
         site_name = site.replace(' ','')
         site_details = sites_df.loc[site]
         converter = access_data_converter(site_details)
-        out_path = os.path.join(access_file_path)       
+        out_path = os.path.join(access_file_path)
         converter.write_to_netcdf(out_path)
 #------------------------------------------------------------------------------
