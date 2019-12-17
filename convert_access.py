@@ -13,6 +13,7 @@ import os
 import pandas as pd
 import xarray as xr
 import xlrd
+import pdb
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF CLASS SECTION ###
@@ -45,7 +46,6 @@ class access_data_converter():
                 df.index = in_ds.time.data
                 df.index.name = 'time'
                 df = df.loc[~df.index.duplicated()]
-                df.index = in_ds.time
                 conv_ds = do_conversions(df).to_xarray()
                 _set_variable_attributes(conv_ds,
                                          round(this_lat.item(), 4),
@@ -54,7 +54,7 @@ class access_data_converter():
                 results.append(conv_ds)
         in_ds.close()
         merge_ds = xr.merge(results)
-        if self.time_step_step == 30: out_ds = _resample_dataset(merge_ds)
+        if self.time_step == 30: out_ds = _resample_dataset(merge_ds)
         else: out_ds = merge_ds
         self._set_global_attributes(out_ds)
         return out_ds
@@ -178,12 +178,12 @@ def _resample_dataset(ds):
 
     precip_list = [x for x in ds if 'Precip' in x]
     no_precip_list = [x for x in ds if not 'Precip' in x]
-    precip_ds = ds[precip_list]
-    no_precip_ds = ds[no_precip_list].resample(time='30T').interpolate('linear')
-    for var in precip_ds:
-        cuml_precip = precip_ds[var].cumsum()
+    new_ds = ds[no_precip_list].resample(time='30T').interpolate('linear')
+    for var in precip_list:
+        cuml_precip = ds[var].cumsum()
         cuml_precip = cuml_precip.resample(time='30T').interpolate('linear')
-        no_precip_ds[var] = cuml_precip - cuml_precip.shift()
+        new_ds[var] = cuml_precip - cuml_precip.shift()
+    return new_ds
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
