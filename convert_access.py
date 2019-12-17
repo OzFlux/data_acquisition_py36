@@ -13,7 +13,6 @@ import os
 import pandas as pd
 import xarray as xr
 import xlrd
-import pdb
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF CLASS SECTION ###
@@ -46,7 +45,9 @@ class access_data_converter():
                     l += _get_data(in_ds, var, this_lat, this_lon,
                                    self.return_soil_depths)
                 df = pd.concat(l, axis=1)
-                df.index = in_ds.time
+                df.index = in_ds.time.data
+                df.index.name = 'time'
+                df = df.loc[~df.index.duplicated()]
                 if self.time_step == 30:
                     df = df.resample('30T').interpolate()
                 conv_ds = do_conversions(df).to_xarray()
@@ -81,7 +82,7 @@ class access_data_converter():
         ds.attrs = {'nrecs': len(ds.time),
                     'start_date': (dt.datetime.strftime
                                    (pd.Timestamp(ds.time[0].item()),
-                                   '%Y-%m-%d %H:%M:%S')),
+                                    '%Y-%m-%d %H:%M:%S')),
                     'end_date': (dt.datetime.strftime
                                  (pd.Timestamp(ds.time[-1].item()),
                                   '%Y-%m-%d %H:%M:%S')),
@@ -100,7 +101,7 @@ class access_data_converter():
         print('Writing netCDF file for site {}'.format(self.site_name))
         dataset = self.create_dataset()
         fname = '{}_ozflux_access.nc'.format(''.join(self.site_name.split(' ')))
-        target = os.path.join(write_path, fname)
+        target = os.path.join(write_path, 'OzFlux_files', fname)
         dataset.to_netcdf(target, format='NETCDF4')
     #--------------------------------------------------------------------------
 
@@ -138,18 +139,17 @@ def _get_data(ds, var, lat, lon, return_soil_depths):
     if len(ds[var].dims) == 3:
         return [pd.Series(_screen_vars(ds[var].sel(lat=lat, lon=lon)),
                           name=swap_var)]
-    else:
-        if return_soil_depths:
-            l = []
-            for this_dim in ds.soil_lvl:
-                name = '{}_{}m'.format(swap_var, str(round(this_dim.item(), 2)))
-                l.append(pd.Series(_screen_vars(ds[var].sel(soil_lvl=this_dim,
-                                                lat=lat, lon=lon)), name=name))
-            return l
-        else:
-            return [pd.Series(_screen_vars(ds[var].sel(soil_lvl=ds.soil_lvl[0],
-                                                       lat=lat, lon=lon)),
-                              name=swap_var)]
+    if return_soil_depths:
+        l = []
+        for this_dim in ds.soil_lvl:
+            name = '{}_{}m'.format(swap_var, str(round(this_dim.item(), 2)))
+            l.append(pd.Series(_screen_vars(ds[var].sel(soil_lvl=this_dim,
+                                                        lat=lat, lon=lon)), 
+                               name=name))
+        return l
+    return [pd.Series(_screen_vars(ds[var].sel(soil_lvl=ds.soil_lvl[0],
+                                               lat=lat, lon=lon)),
+                      name=swap_var)]
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -157,62 +157,12 @@ def _get_var_attrs(var):
 
     """Make a dictionary of attributes for passed variable"""
 
-    vars_dict = {'Ah': {'long_name': 'Absolute humidity',
-                        'units': 'g/m3'},
-                 'Fa': {'long_name': 'Calculated available energy',
-                        'units': 'W/m2'},
-                 'Fe': {'long_name': 'Surface latent heat flux',
-                        'units': 'W/m2'},
-                 'Fg': {'long_name': 'Calculated ground heat flux',
-                        'units': 'W/m2',
-                        'standard_name': 'downward_heat_flux_in_soil'},
-                 'Fh': {'long_name': 'Surface sensible heat flux',
-                        'units': 'W/m2'},
-                 'Fld': {'long_name':
-                         'Average downward longwave radiation at the surface',
-                         'units': 'W/m2'},
-                 'Flu': {'long_name':
-                         'Average upward longwave radiation at the surface',
-                         'standard_name': 'surface_upwelling_longwave_flux_in_air',
-                         'units': 'W/m2'},
-                 'Fn': {'long_name': 'Calculated net radiation',
-                        'standard_name': 'surface_net_allwave_radiation',
-                        'units': 'W/m2'},
-                 'Fsd': {'long_name': 'average downwards shortwave radiation at the surface',
-                         'units': 'W/m2'},
-                 'Fsu': {'long_name': 'average upwards shortwave radiation at the surface',
-                         'standard_name': 'surface_upwelling_shortwave_flux_in_air',
-                         'units': 'W/m2'},
-                 'Habl': {'long_name': 'planetary boundary layer height',
-                          'units': 'm'},
-                 'Precip': {'long_name': 'Precipitation total over time step',
-                            'units': 'mm/30minutes'},
-                 'ps': {'long_name': 'Air pressure',
-                        'units': 'kPa'},
-                 'q': {'long_name': 'Specific humidity',
-                       'units': 'kg/kg'},
-                 'RH': {'long_name': 'Relative humidity',
-                        'units': '%'},
-                 'Sws': {'long_name': 'soil_moisture_content', 'units': 'frac'},
-                 'Ta': {'long_name': 'Air temperature',
-                        'units': 'C'},
-                 'Ts': {'long_name': 'soil temperature',
-                        'units': 'C'},
-                 'u': {'long_name': '10m wind u component',
-                       'units': 'm s-1'},
-                 'v': {'long_name': '10m wind v component',
-                       'units': 'm s-1'},
-                 'Wd': {'long_name': 'Wind direction',
-                        'units': 'degT'},
-                 'Ws': {'long_name': 'Wind speed',
-                        'units': 'm/s'}}
-
     generic_dict = {'instrument': '', 'valid_range': (-1e+35,1e+35),
                     'missing_value': -9999, 'height': '',
                     'standard_name': '', 'group_name': '',
                     'serial_number': ''}
 
-    generic_dict.update(vars_dict[var])
+    generic_dict.update(attrs_dict[var])
     return generic_dict
 #------------------------------------------------------------------------------
 
@@ -235,6 +185,7 @@ def _screen_vars(series):
 #--------------------------------------------------------------------------
 def _set_variable_attributes(ds, latitude, longitude):
 
+    print([x for x in attrs_dict.keys() if not x in list(ds.variables)])
     for this_var in list(ds.variables):
         if this_var == 'time': continue
         try:
@@ -263,9 +214,9 @@ def convert_pressure(df):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_Ah(df):
-
-    return get_e(df) * 10**6 / (df.Ta * 8.3143) / 18
+def get_Ah(df): 
+    
+    return get_e(df) * 10**3 / ((df.Ta * 8.3143) / 18)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -293,7 +244,7 @@ def get_es(df):
 
     return 0.6106 * np.exp(17.27 * (df.Ta - 273.15) / ((df.Ta - 273.15)  + 237.3))
 #------------------------------------------------------------------------------
-
+    
 #------------------------------------------------------------------------------
 def get_Rh(df):
 
@@ -319,7 +270,7 @@ def do_conversions(df):
 
     Sws_list = list(filter(lambda x: 'Sws' in x, df.columns))
     Ts_list = list(filter(lambda x: 'Ts' in x, df.columns))
-    full_list = ['Habl', 'Fsd', 'Fld', 'Fh', 'Fe', 'Precip', 'u', 'v'] + Sws_list
+    full_list = ['Habl', 'Fsd', 'Fld', 'Fh', 'Fe', 'Precip', 'q', 'u', 'v'] + Sws_list
     new_df = df[full_list].copy()
     for var in Ts_list: new_df[var] = convert_Kelvin_to_celsius(df[var])
     new_df['Ta'] = convert_Kelvin_to_celsius(df.Ta)
@@ -327,6 +278,7 @@ def do_conversions(df):
     new_df['Ah'] = get_Ah(df)
     new_df['Ws'] = get_wind_speed(df)
     new_df['Wd'] = get_wind_direction(df)
+    new_df['ps'] = convert_pressure(df)
     new_df = new_df.join(get_energy_components(df))
     return new_df
 #------------------------------------------------------------------------------
@@ -340,21 +292,73 @@ def do_conversions(df):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-vars_dict = {'av_swsfcdown': 'Fsd',
-             'av_netswsfc': 'Fn_sw',
-             'av_lwsfcdown': 'Fld',
-             'av_netlwsfc': 'Fn_lw',
-             'temp_scrn': 'Ta',
-             'qsair_scrn': 'q',
-             'soil_mois': 'Sws',
-             'soil_temp': 'Ts',
-             'u10': 'u',
-             'v10': 'v',
-             'sfc_pres': 'ps',
-             'inst_prcp': 'Precip',
-             'sens_hflx': 'Fh',
-             'lat_hflx': 'Fe',
-             'abl_ht': 'Habl'}
+attrs_dict = {'Ah': {'long_name': 'Absolute humidity',
+                     'units': 'g/m3'},
+              'Fa': {'long_name': 'Calculated available energy',
+                     'units': 'W/m2'},
+              'Fe': {'long_name': 'Surface latent heat flux',
+                     'units': 'W/m2'},
+              'Fg': {'long_name': 'Calculated ground heat flux',
+                     'units': 'W/m2',
+                     'standard_name': 'downward_heat_flux_in_soil'},
+              'Fh': {'long_name': 'Surface sensible heat flux',
+                     'units': 'W/m2'},
+              'Fld': {'long_name':
+                      'Average downward longwave radiation at the surface',
+                      'units': 'W/m2'},
+              'Flu': {'long_name':
+                      'Average upward longwave radiation at the surface',
+                      'standard_name': 'surface_upwelling_longwave_flux_in_air',
+                      'units': 'W/m2'},
+              'Fn': {'long_name': 'Calculated net radiation',
+                     'standard_name': 'surface_net_allwave_radiation',
+                     'units': 'W/m2'},
+              'Fsd': {'long_name': 'average downwards shortwave radiation at the surface',
+                      'units': 'W/m2'},
+              'Fsu': {'long_name': 'average upwards shortwave radiation at the surface',
+                      'standard_name': 'surface_upwelling_shortwave_flux_in_air',
+                      'units': 'W/m2'},
+              'Habl': {'long_name': 'planetary boundary layer height',
+                       'units': 'm'},
+              'Precip': {'long_name': 'Precipitation total over time step',
+                         'units': 'mm/30minutes'},
+              'ps': {'long_name': 'Air pressure',
+                     'units': 'kPa'},
+              'q': {'long_name': 'Specific humidity',
+                    'units': 'kg/kg'},
+              'RH': {'long_name': 'Relative humidity',
+                     'units': '%'},
+              'Sws': {'long_name': 'soil_moisture_content', 'units': 'frac'},
+              'Ta': {'long_name': 'Air temperature',
+                     'units': 'C'},
+              'Ts': {'long_name': 'soil temperature',
+                     'units': 'C'},
+              'u': {'long_name': '10m wind u component',
+                    'units': 'm s-1'},
+              'v': {'long_name': '10m wind v component',
+                    'units': 'm s-1'},
+              'Wd': {'long_name': 'Wind direction',
+                     'units': 'degT'},
+              'Ws': {'long_name': 'Wind speed',
+                     'units': 'm/s'}}
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+funcs_dict = {'av_swsfcdown': [0, 1400],
+              'av_netswsfc': [0, 1400],
+              'av_lwsfcdown': [200, 600],
+              'av_netlwsfc': [-300, 300],
+              'temp_scrn': [230, 330],
+              'qsair_scrn': [0, 1],
+              'soil_mois': [0, 100],
+              'soil_temp': [210, 350],
+              'u10': [-50, 50],
+              'v10': [-50, 50],
+              'sfc_pres': [75000, 110000],
+              'inst_prcp': [0, 100],
+              'sens_hflx': [-200, 1000],
+              'lat_hflx': [-200, 1000],
+              'abl_ht': [0, 5000]}
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -376,21 +380,21 @@ range_dict = {'av_swsfcdown': [0, 1400],
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-funcs_dict = {'av_swsfcdown': [0, 1400],
-              'av_netswsfc': [0, 1400],
-              'av_lwsfcdown': [200, 600],
-              'av_netlwsfc': [-300, 300],
-              'temp_scrn': [230, 330],
-              'qsair_scrn': [0, 1],
-              'soil_mois': [0, 100],
-              'soil_temp': [210, 350],
-              'u10': [-50, 50],
-              'v10': [-50, 50],
-              'sfc_pres': [75000, 110000],
-              'inst_prcp': [0, 100],
-              'sens_hflx': [-200, 1000],
-              'lat_hflx': [-200, 1000],
-              'abl_ht': [0, 5000]}
+vars_dict = {'av_swsfcdown': 'Fsd',
+             'av_netswsfc': 'Fn_sw',
+             'av_lwsfcdown': 'Fld',
+             'av_netlwsfc': 'Fn_lw',
+             'temp_scrn': 'Ta',
+             'qsair_scrn': 'q',
+             'soil_mois': 'Sws',
+             'soil_temp': 'Ts',
+             'u10': 'u',
+             'v10': 'v',
+             'sfc_pres': 'ps',
+             'inst_prcp': 'Precip',
+             'sens_hflx': 'Fh',
+             'lat_hflx': 'Fe',
+             'abl_ht': 'Habl'}
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -416,8 +420,9 @@ if __name__ == "__main__":
 
     sites_df = get_ozflux_site_list(master_file_path)
     for site in sites_df.index[:1]:
+        site_name = site.replace(' ','')
         site_details = sites_df.loc[site]
         converter = access_data_converter(site_details)
-        out_path = os.path.join(access_file_path, 'OzFlux_files')
-        converter.write_to_netcdf(access_file_path)
+        out_path = os.path.join(access_file_path)       
+        converter.write_to_netcdf(out_path)
 #------------------------------------------------------------------------------
