@@ -11,6 +11,8 @@ import glob
 import numpy as np
 import os
 import pandas as pd
+from pytz import timezone
+from timezonefinder import TimezoneFinder as tzf
 import xarray as xr
 import xlrd
 import pdb
@@ -54,6 +56,9 @@ class access_data_converter():
                 results.append(conv_ds)
         in_ds.close()
         merge_ds = xr.merge(results)
+        offset = self.get_utc_offset()
+        merge_ds.time.data = (pd.to_datetime(merge_ds.time.data) + 
+                              dt.timedelta(hours=offset))
         if self.time_step == 30: out_ds = _resample_dataset(merge_ds)
         else: out_ds = merge_ds
         self._set_global_attributes(out_ds)
@@ -74,6 +79,15 @@ class access_data_converter():
         return xr.open_mfdataset(self.get_file_list(), concat_dim='time')
     #--------------------------------------------------------------------------
 
+    #--------------------------------------------------------------------------
+    def get_utc_offset(self):
+        
+        tz_name = tzf().timezone_at(lng = self.longitude, lat = self.latitude)
+        tz_obj = timezone(tz_name)
+        now_time = dt.datetime.now()
+        return (tz_obj.utcoffset(now_time) - tz_obj.dst(now_time)).seconds / 3600
+    #--------------------------------------------------------------------------
+    
     #--------------------------------------------------------------------------
     def _set_global_attributes(self, ds):
 
@@ -182,7 +196,7 @@ def _resample_dataset(ds):
     for var in precip_list:
         cuml_precip = ds[var].cumsum()
         cuml_precip = cuml_precip.resample(time='30T').interpolate('linear')
-        new_ds[var] = cuml_precip - cuml_precip.shift()
+        new_ds[var] = cuml_precip - cuml_precip.shift(time=1)
     return new_ds
 #------------------------------------------------------------------------------
 
