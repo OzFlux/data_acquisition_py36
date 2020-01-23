@@ -444,7 +444,7 @@ master_file_path = '/mnt/OzFlux/Sites/site_master.xls'
 if __name__ == "__main__":
 
     sites_df = get_ozflux_site_list(master_file_path)
-    for site in sites_df.index[:1]:
+    for site in sites_df.index:
         site_name = site.replace(' ','')
         site_details = sites_df.loc[site]
         converter = access_data_converter(site_details)

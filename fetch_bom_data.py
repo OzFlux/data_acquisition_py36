@@ -676,8 +676,8 @@ def get_station_details_formatting(truncate_description = True):
                     'first_file_year', 'last_file_year', 'pct_complete',
                     'pct_vals_Y', 'pct_vals_N', 'pct_vals_W', 'pct_vals_S',
                     'pct_vals_I', 'eor']
-    start_line = 348
-    end_line = 370
+    start_line = 408
+    end_line = 430
     zf = get_ftp_data(search_list = ['Notes'])
     with zf.open(zf.namelist()[0]) as file_obj:
         notes_list = file_obj.readlines()
