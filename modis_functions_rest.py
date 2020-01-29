@@ -321,6 +321,24 @@ class modis_data_network(modis_data):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
+### END OF CLASS SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+### BEGINNING OF FUNCTION SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def bin_converter(series):
+
+    data_list = []
+    for x in series:
+        this_bin = bin(int(x)).split('b')[-1].zfill(8)
+        data_list.append(int(this_bin[:-5], 2))
+    return data_list
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 def _error_codes(json_obj):
 
     d = {400: 'Invalid band for product',
@@ -642,6 +660,10 @@ def modis_object(by_coords=True):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
+### END OF FUNCTION SECTION ###
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 ### MAIN PROGRAM
 #------------------------------------------------------------------------------
 
@@ -687,17 +709,13 @@ if __name__ == "__main__":
             short_name = _band_short_name(band)
 
             # Get site data and write to netcdf
-            for site in sites.index[16:17]:
+            for site in sites.index[:1]:
 
                 print('Retrieving data for site {}:'.format(site))
 
                 target = os.path.join(this_path,
                                       '{0}_{1}'.format(site.replace(' ', '_'),
                                                        short_name))
-                # file_name = '{0}_{1}'.format(site.replace(' ', '_'), short_name)
-                # nc_file_name = '{0}_{1}.nc'.format(site.replace(' ', '_'),
-                #                                    short_name)
-                # plot_file_name = '{0}_1.png'.format(site.replace(' ', '_'))
                 full_nc_path = target + '.nc'
                 full_plot_path = target + '.png'
                 try: first_date = dt.date(int(sites.loc[site, 'Start year']) - 1, 7, 1)
@@ -726,8 +744,8 @@ if __name__ == "__main__":
                 thisfig = x.plot_data(plot_to_screen=False)
                 thisfig.savefig(full_plot_path)
                 plt.close(thisfig)
-                da = (pd.DataFrame({'EVI': x.get_spatial_mean(),
-                                    'EVI_smoothed': x.get_spatial_mean(smooth_signal=True)})
+                da = (pd.DataFrame({short_name: x.get_spatial_mean(),
+                                    short_name + '_smoothed': x.get_spatial_mean(smooth_signal=True)})
                       .to_xarray())
                 da.attrs = x.data_array.attrs
                 resampled_da = da.resample({'time': '30T'}).interpolate()
