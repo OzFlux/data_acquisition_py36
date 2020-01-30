@@ -20,6 +20,7 @@ import requests
 from requests.exceptions import ConnectionError
 from scipy import interpolate, signal
 from time import sleep
+from types import SimpleNamespace
 import webbrowser
 import xarray as xr
 import pdb
@@ -113,15 +114,31 @@ class modis_data():
         band_attrs.update({'site': site})
         self.data_array.attrs.update(band_attrs)
 
+        # Apply range limits
+        self.data_array: self._apply_range_limits()
+
         # QC if requested
-        if qcfiltered:
-            qc_dict = get_qc_details(product)
-            if not qc_dict: print('No QC variable defined!'); return
-            qc_array = request_subset_by_coords(product, latitude, longitude,
-                                                qc_dict['qc_name'],
-                                                start_date, end_date,
-                                                subset_height_km, subset_width_km)
-            self._qc_data_array(qc_array, qc_dict)
+        if qcfiltered: self._qc_data_array()
+        #     qc_dict = get_qc_details(product)
+        #     if not qc_dict: print('No QC variable defined!'); return
+        #     qc_array = request_subset_by_coords(product, latitude, longitude,
+        #                                         qc_dict['qc_name'],
+        #                                         start_date, end_date,
+        #                                         subset_height_km, subset_width_km)
+        #     self._qc_data_array(qc_array, qc_dict)
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def _apply_range_limits(self):
+
+        range_limits = self.data_array.attrs['valid_range'].split('to')
+        mn, mx = float(range_limits[0]), float(range_limits[-1])
+        if 'scale_factor' in self.data_array.attrs:
+            scale = float(self.data_array.attrs['scale_factor'])
+            mn = scale * mn
+            mx = scale * mx
+        self.data_array = self.data_array.where((self.data_array >= mn) &
+                                                (self.data_array <= mx))
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -215,18 +232,16 @@ class modis_data():
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def _qc_data_array(self, qc_array, qc_dict):
-
-        # Apply range limits
-        range_limits = self.data_array.attrs['valid_range'].split('to')
-        mn, mx = float(range_limits[0]), float(range_limits[-1])
-        scale = float(self.data_array.attrs['scale_factor'])
-        mn = scale * mn
-        mx = scale * mx
-        self.data_array = self.data_array.where((self.data_array >= mn) &
-                                                (self.data_array <= mx))
+    def _qc_data_array(self, qc_array):
 
         # Apply qc
+        qc_dict = get_qc_details(self.data_array.product)
+        if not qc_dict: print('No QC variable defined!'); return
+        if qc_dict['is_binary']:
+            f = lambda x: int(bin(int(x)).split('b')[1].zfill(8)[:-5],2)
+            vector_f = np.vectorize(f)
+            qc_array.data = vector_f(qc_array.data)
+
         max_allowed = qc_dict['reliability_threshold']
         self.data_array = self.data_array.where((qc_array <= max_allowed))
     #--------------------------------------------------------------------------
@@ -300,20 +315,19 @@ class modis_data_network(modis_data):
         band_attrs.update({'site': site_attrs['network_sitename']})
         self.data_array.attrs.update(band_attrs)
 
-        # QC if requested
-        if qcfiltered:
-            self._qc_data_array()
-    #--------------------------------------------------------------------------
-
-    #--------------------------------------------------------------------------
-    def _qc_data_array(self):
-
         # Apply range limits
+        self._apply_range_limits()
+    #--------------------------------------------------------------------------
+
+    #--------------------------------------------------------------------------
+    def _apply_range_limits(self):
+
         range_limits = self.data_array.attrs['valid_range'].split('to')
         mn, mx = float(range_limits[0]), float(range_limits[-1])
-        scale = float(self.data_array.attrs['scale_factor'])
-        mn = scale * mn
-        mx = scale * mx
+        if 'scale_factor' in self.data_array.attrs:
+            scale = float(self.data_array.attrs['scale_factor'])
+            mn = scale * mn
+            mx = scale * mx
         self.data_array = self.data_array.where((self.data_array >= mn) &
                                                 (self.data_array <= mx))
     #--------------------------------------------------------------------------
@@ -329,13 +343,13 @@ class modis_data_network(modis_data):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def bin_converter(series):
+# def bin_converter(x): return int(bin(int(x)).split('b')[1].zfill(8)[:-5],2)
 
-    data_list = []
-    for x in series:
-        this_bin = bin(int(x)).split('b')[-1].zfill(8)
-        data_list.append(int(this_bin[:-5], 2))
-    return data_list
+    # data_list = []
+    # for x in series:
+    #     this_bin = bin(int(x)).split('b')[-1].zfill(8)
+    #     data_list.append(int(this_bin[:-5], 2))
+    # return data_list
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -476,11 +490,11 @@ def get_qc_details(product = None):
     """Get the qc variable details for the product"""
 
     d = {'MOD13Q1': {'qc_name': '250m_16_days_pixel_reliability',
-                     'reliability_threshold': 1,
+                     'is_binary': False, 'reliability_threshold': 1,
                      'bitmap': {'0': 'Good data', '1': 'Marginal data',
                                 '2': 'Snow/Ice', '3': 'Cloudy'}},
-         'aMOD17A2H': {'qc_name': 'Psn_QC_500m',
-                      'reliability_threshold': 1,
+         'MOD17A2H': {'qc_name': 'Psn_QC_500m',
+                      'is_binary': True, 'reliability_threshold': 1,
                       'bitmap': {'0': 'Good data', '1': 'Marginal data',
                                  '2': 'Snow/Ice', '3': 'Cloudy'}}}
     if not product in d: return None
@@ -657,6 +671,71 @@ def modis_object(by_coords=True):
     return namedtuple('modis_by_network',
                       ['product', 'band', 'network_name', 'site_ID',
                        'start_date', 'end_date'])
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def get_config_file_by_coords(product, band, latitude, longitude,
+                              start_date=None, end_date=None,
+                              above_below_km=0, left_right_km=0):
+
+    try:
+        assert -180 <= longitude <= 180
+        assert -90 <= latitude <= 90
+    except AssertionError:
+        print ('Latitude or longitude out of bounds'); raise RuntimeError
+    try:
+        assert isinstance(above_below_km, int)
+        assert isinstance(left_right_km, int)
+    except AssertionError:
+        print ('"above_below_km" and "left_right_km" kwargs must be integers')
+    unique_dict = {'latitude': latitude, 'longitude': longitude,
+                   'above_below_km': above_below_km, 'left_right_km': left_right_km}
+    common_dict = _do_common_checks(product, band, latitude, longitude,
+                                    start_date, end_date)
+    common_dict.update(unique_dict)
+    return SimpleNamespace(**common_dict)
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def _do_common_checks(*args):
+
+    product, band = args[0], args[1]
+    latitude, longitude = args[2], args[3]
+    start_date, end_date = args[4], args[5]
+
+    # Check product and band are legit
+    try:
+        assert product in get_product_list(include_details = False)
+    except AssertionError:
+        print('Product not available from web service! Check available '
+              'products list using get_product_list()'); raise KeyError
+
+    try:
+        get_band_list(product)[band]
+    except KeyError:
+        print('Band not available for {}! Check available bands '
+              'list using get_band_list(product)'.format(product)); raise
+
+    # Check and set MODIS dates
+    avail_dates = get_product_dates(product, latitude, longitude)
+    py_avail_dates = np.array([dt.datetime.strptime(x['modis_date'], 'A%Y%j').date()
+                               for x in avail_dates])
+    if start_date:
+        py_start_dt = dt.datetime.strptime(start_date, '%Y%m%d').date()
+    else:
+        py_start_dt = py_avail_dates[0]
+    if end_date:
+        py_end_dt = dt.datetime.strptime(end_date, '%Y%m%d').date()
+    else:
+        py_end_dt = py_avail_dates[-1]
+    start_idx = abs(py_avail_dates - py_start_dt).argmin()
+    end_idx = abs(py_avail_dates - py_end_dt).argmin()
+
+    return {'product': product, 'band': band,
+            'start_date': avail_dates[start_idx]['modis_date'],
+            'end_date': avail_dates[end_idx]['modis_date']}
+
+
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
