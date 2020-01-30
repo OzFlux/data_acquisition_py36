@@ -87,30 +87,17 @@ class modis_data():
 
     def __init__(self, product, band, latitude, longitude,
                  start_date=None, end_date=None,
-                 subset_height_km=0, subset_width_km=0, site=None,
+                 above_below_km=0, left_right_km=0, site=None,
                  qcfiltered=False):
 
-        # Check validity of passed arguments
-        if not product in get_product_list(include_details = False):
-            raise KeyError('Product not available from web service! Check '
-                           'available products list using get_product_list()')
-        try:
-            band_attrs = get_band_list(product)[band]
-        except KeyError:
-            raise KeyError('Band not available for {}! Check available bands '
-                           'list using get_band_list(product)'.format(product))
-        if start_date is None or end_date is None:
-            dates = get_product_dates(product, latitude, longitude)
-        if start_date is None:
-            start_date = modis_to_from_pydatetime(dates[0]['modis_date'])
-        if end_date is None:
-            end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
+        config_object = get_config_file_by_coords(product, band,
+                                                  latitude, longitude,
+                                                  start_date, end_date,
+                                                  above_below_km, left_right_km)
 
         # Get the data and write additional attributes
-        self.data_array = request_subset_by_coords(product, latitude, longitude,
-                                                   band, start_date, end_date,
-                                                   subset_height_km,
-                                                   subset_width_km)
+        self.data_array = request_subset_by_coords(config_object)
+        band_attrs = get_band_list(product)[band]
         band_attrs.update({'site': site})
         self.data_array.attrs.update(band_attrs)
 
@@ -281,6 +268,12 @@ class modis_data_network(modis_data):
     '''
     def __init__(self, product, band, network_name, site_ID,
                  start_date = None, end_date = None, qcfiltered = False):
+
+
+        # config_object = get_config_file_by_network_site(product, band,
+        #                                                 network_name, site_ID,
+        #                                                 start_date, end_date)
+
 
         if not product in get_product_list(include_details = False):
             raise KeyError('Product not available from web service! Check '
@@ -540,14 +533,14 @@ def modis_to_from_pydatetime(date):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def _process_data(data, prod, band):
+def _process_data(data, configs):
 
     """Process the raw data into a more human-intelligible format (xarray)"""
 
     meta = {key:value for key,value in list(data[0].items())
             if key != "subset" }
-    meta['product'] = prod
-    meta['band'] = band
+    meta['product'] = configs.product
+    meta['band'] = configs.band
     if 'scale' in meta:
         try: scale = float(meta['scale'])
         except ValueError: scale = None
@@ -581,40 +574,48 @@ def _process_data(data, prod, band):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def request_subset_by_coords(prod, lat, lng, band, start_date, end_date,
-                             ab = 0, lr = 0, qcfiltered = False):
+def request_subset_by_coords(configs, qcfiltered = False):
+
+# def request_subset_by_coords(prod, lat, lng, band, start_date, end_date,
+#                              ab = 0, lr = 0, qcfiltered = False):
 
     """Get the data from ORNL DAAC by coordinates - are we double-handling dates here?"""
 
     def getSubsetURL(this_start_date, this_end_date):
-        return( "".join([api_base_url, prod, "/subset?",
-                     "latitude=", str(lat),
-                     "&longitude=", str(lng),
-                     "&band=", str(band),
+        return( "".join([api_base_url, configs.product, "/subset?",
+                     "latitude=", str(configs.latitude),
+                     "&longitude=", str(configs.longitude),
+                     "&band=", configs.band,
                      "&startDate=", this_start_date,
                      "&endDate=", this_end_date,
-                     "&kmAboveBelow=", str(ab),
-                     "&kmLeftRight=", str(lr)]))
+                     "&kmAboveBelow=", str(configs.above_below_km),
+                     "&kmLeftRight=", str(configs.left_right_km)]))
 
-    if not (isinstance(ab, int) and isinstance(lr, int)):
-        raise TypeError('km_above_below (ab) and km_left_right (lr) must be '
-                        'integers!')
-    dates = [x['modis_date'] for x in get_product_dates(prod, lat, lng)]
-    pydates_arr = np.array([modis_to_from_pydatetime(x) for x in dates])
-    if not start_date: start_date = pydates_arr[0]
-    if not end_date: end_date = pydates_arr[-1]
-    start_idx = abs(pydates_arr - start_date).argmin()
-    end_idx = abs(pydates_arr - end_date).argmin()
+    # if not (isinstance(ab, int) and isinstance(lr, int)):
+    #     raise TypeError('km_above_below (ab) and km_left_right (lr) must be '
+    #                     'integers!')
+    # dates = [x['modis_date'] for x in get_product_dates(prod, lat, lng)]
+    # pydates_arr = np.array([modis_to_from_pydatetime(x) for x in dates])
+    # if not start_date: start_date = pydates_arr[0]
+    # if not end_date: end_date = pydates_arr[-1]
+    # start_idx = abs(pydates_arr - start_date).argmin()
+    # end_idx = abs(pydates_arr - end_date).argmin()
+    dates = [x['modis_date'] for x in get_product_dates(configs.product,
+                                                        configs.latitude,
+                                                        configs.longitude)]
+    start_idx = dates.index(configs.start_date)
+    end_idx = dates.index(configs.end_date)
     date_chunks = list(_get_chunks(dates[start_idx: end_idx]))
     subsets = []
-    print('Retrieving data for product {0}, band {1}:'.format(prod, band))
+    print('Retrieving data for product {0}, band {1}:'
+          .format(configs.product, configs.band))
     for i, chunk in enumerate(date_chunks):
         print('[{0} / {1}] {2} - {3}'.format(str(i + 1), str(len(date_chunks)),
               chunk[0], chunk[-1]))
         url = getSubsetURL(chunk[0], chunk[-1])
         subset = request_subset_by_URLstring(url)
         subsets.append(subset)
-    return _process_data(subsets, prod, band)
+    return _process_data(subsets, configs)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -697,8 +698,22 @@ def get_config_file_by_coords(product, band, latitude, longitude,
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
+def get_config_file_by_network_site(product, band, network, site,
+                                    start_date=None, end_date=None):
+
+
+    unique_dict = {'latitude': latitude, 'longitude': longitude,
+                   'above_below_km': above_below_km, 'left_right_km': left_right_km}
+    common_dict = _do_common_checks(product, band, latitude, longitude,
+                                    start_date, end_date)
+    common_dict.update(unique_dict)
+    return SimpleNamespace(**common_dict)
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
 def _do_common_checks(*args):
 
+    # Unpack args
     product, band = args[0], args[1]
     latitude, longitude = args[2], args[3]
     start_date, end_date = args[4], args[5]
