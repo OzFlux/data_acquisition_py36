@@ -762,6 +762,7 @@ def _do_common_checks(*args):
     end_idx = abs(py_avail_dates - py_end_dt).argmin()
 
     return {'product': product, 'band': band,
+            'latitude': latitude, 'longitude': longitude,
             'start_date': avail_dates[start_idx]['modis_date'],
             'end_date': avail_dates[end_idx]['modis_date']}
 #------------------------------------------------------------------------------
