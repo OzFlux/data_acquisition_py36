@@ -90,6 +90,7 @@ class modis_data():
                  above_below_km=0, left_right_km=0, site=None,
                  qcfiltered=False):
 
+        # Create a configuration namespace to pass to funcs
         config_object = get_config_file_by_coords(product, band,
                                                   latitude, longitude,
                                                   start_date, end_date,
@@ -100,6 +101,9 @@ class modis_data():
         band_attrs = get_band_list(product)[band]
         band_attrs.update({'site': site})
         self.data_array.attrs.update(band_attrs)
+
+        # Attach the original configs
+        self.configs = config_object
 
         # Apply range limits
         self.data_array: self._apply_range_limits()
@@ -269,47 +273,67 @@ class modis_data_network(modis_data):
     def __init__(self, product, band, network_name, site_ID,
                  start_date = None, end_date = None, qcfiltered = False):
 
-
-        # config_object = get_config_file_by_network_site(product, band,
-        #                                                 network_name, site_ID,
-        #                                                 start_date, end_date)
-
-
-        if not product in get_product_list(include_details = False):
-            raise KeyError('Product not available from web service! Check '
-                           'available products list using get_product_list()')
         try:
-            band_attrs = get_band_list(product)[band]
-        except KeyError:
-            raise KeyError('Band not available for {}! Check available bands '
-                           'list using get_band_list(product)'.format(product))
+            assert network_name in get_network_list()
+        except AssertionError:
+            print ('Network not available from web service! Check available '
+                   'networks list using get_network_list()'); raise KeyError
         try:
             site_attrs = get_network_list(network_name)[site_ID]
         except KeyError:
-            raise KeyError('Site ID code not found! Check available site ID '
-                           'codes using get_network_list(network)')
-        if not network_name in get_network_list():
-            raise KeyError('Network not available from web service! Check '
-                           'available networks list using get_network_list()')
+            print('Site ID code not found! Check available site ID codes '
+                  'using get_network_list(network)'); raise
 
-        if start_date is None or end_date is None:
-            dates = get_product_dates(product,
-                                      site_attrs['latitude'],
-                                      site_attrs['longitude'])
-        if start_date is None:
-            start_date = modis_to_from_pydatetime(dates[0]['modis_date'])
-        if end_date is None:
-            end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
+        # Create a configuration namespace to pass to funcs
+        config_object = get_config_file_by_network_site(product, band,
+                                                        network_name, site_ID,
+                                                        site_attrs['latitude'],
+                                                        site_attrs['longitude'],
+                                                        start_date, end_date)
 
         # Get the data and write additional attributes
-        self.data_array = request_subset_by_siteid(product, band, network_name,
-                                                   site_ID, start_date, end_date,
+        self.data_array = request_subset_by_siteid(config_object,
                                                    qcfiltered = qcfiltered)
+        band_attrs = get_band_list(product)[band]
         band_attrs.update({'site': site_attrs['network_sitename']})
         self.data_array.attrs.update(band_attrs)
 
+        # Attach the original configs
+        self.configs = config_object
+
         # Apply range limits
         self._apply_range_limits()
+
+        # if not product in get_product_list(include_details = False):
+        #     raise KeyError('Product not available from web service! Check '
+        #                    'available products list using get_product_list()')
+        # try:
+        #     band_attrs = get_band_list(product)[band]
+        # except KeyError:
+        #     raise KeyError('Band not available for {}! Check available bands '
+        #                    'list using get_band_list(product)'.format(product))
+        # try:
+        #     site_attrs = get_network_list(network_name)[site_ID]
+        # except KeyError:
+        #     raise KeyError('Site ID code not found! Check available site ID '
+        #                    'codes using get_network_list(network)')
+        # if not network_name in get_network_list():
+        #     raise KeyError('Network not available from web service! Check '
+        #                    'available networks list using get_network_list()')
+
+        # if start_date is None or end_date is None:
+        #     dates = get_product_dates(product,
+        #                               site_attrs['latitude'],
+        #                               site_attrs['longitude'])
+        # if start_date is None:
+        #     start_date = modis_to_from_pydatetime(dates[0]['modis_date'])
+        # if end_date is None:
+        #     end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
+
+        # Get the data and write additional attributes
+        # self.data_array = request_subset_by_siteid(product, band, network_name,
+        #                                            site_ID, start_date, end_date,
+        #                                            qcfiltered = qcfiltered)
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -576,9 +600,6 @@ def _process_data(data, configs):
 #------------------------------------------------------------------------------
 def request_subset_by_coords(configs, qcfiltered = False):
 
-# def request_subset_by_coords(prod, lat, lng, band, start_date, end_date,
-#                              ab = 0, lr = 0, qcfiltered = False):
-
     """Get the data from ORNL DAAC by coordinates - are we double-handling dates here?"""
 
     def getSubsetURL(this_start_date, this_end_date):
@@ -591,15 +612,6 @@ def request_subset_by_coords(configs, qcfiltered = False):
                      "&kmAboveBelow=", str(configs.above_below_km),
                      "&kmLeftRight=", str(configs.left_right_km)]))
 
-    # if not (isinstance(ab, int) and isinstance(lr, int)):
-    #     raise TypeError('km_above_below (ab) and km_left_right (lr) must be '
-    #                     'integers!')
-    # dates = [x['modis_date'] for x in get_product_dates(prod, lat, lng)]
-    # pydates_arr = np.array([modis_to_from_pydatetime(x) for x in dates])
-    # if not start_date: start_date = pydates_arr[0]
-    # if not end_date: end_date = pydates_arr[-1]
-    # start_idx = abs(pydates_arr - start_date).argmin()
-    # end_idx = abs(pydates_arr - end_date).argmin()
     dates = [x['modis_date'] for x in get_product_dates(configs.product,
                                                         configs.latitude,
                                                         configs.longitude)]
@@ -619,20 +631,21 @@ def request_subset_by_coords(configs, qcfiltered = False):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def request_subset_by_siteid(prod, band, network, siteid, start_date, end_date,
-                             qcfiltered = False):
+def request_subset_by_siteid(configs, qcfiltered = False):
+
+# def request_subset_by_siteid(prod, band, network, siteid, start_date, end_date,
+#                              qcfiltered = False):
 
     """Get the data from ORNL DAAC by network and site id"""
 
-    modis_start = modis_to_from_pydatetime(start_date)
-    modis_end = modis_to_from_pydatetime(end_date)
-    print('Retrieving data for product {0}, band {1}'.format(prod, band))
+    print('Retrieving data for product {0}, band {1}'
+          .format(configs.product, configs.band))
     subset_str = '/subsetFiltered?' if qcfiltered else '/subset?'
-    url = (''.join([api_base_url, prod, '/', network, '/', siteid,
-                    subset_str, band, '&startDate=', modis_start,
-                    '&endDate=', modis_end]))
+    url = (''.join([api_base_url, configs.product, '/', configs.network_name, '/',
+                    configs.site_ID, subset_str, configs.band, '&startDate=',
+                    configs.start_date, '&endDate=', configs.end_date]))
     subset = request_subset_by_URLstring(url)
-    return _process_data([subset], prod, band)
+    return _process_data([subset], configs)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -680,17 +693,12 @@ def get_config_file_by_coords(product, band, latitude, longitude,
                               above_below_km=0, left_right_km=0):
 
     try:
-        assert -180 <= longitude <= 180
-        assert -90 <= latitude <= 90
-    except AssertionError:
-        print ('Latitude or longitude out of bounds'); raise RuntimeError
-    try:
         assert isinstance(above_below_km, int)
         assert isinstance(left_right_km, int)
     except AssertionError:
         print ('"above_below_km" and "left_right_km" kwargs must be integers')
-    unique_dict = {'latitude': latitude, 'longitude': longitude,
-                   'above_below_km': above_below_km, 'left_right_km': left_right_km}
+        raise TypeError
+    unique_dict = {'above_below_km': above_below_km, 'left_right_km': left_right_km}
     common_dict = _do_common_checks(product, band, latitude, longitude,
                                     start_date, end_date)
     common_dict.update(unique_dict)
@@ -698,12 +706,12 @@ def get_config_file_by_coords(product, band, latitude, longitude,
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_config_file_by_network_site(product, band, network, site,
+def get_config_file_by_network_site(product, band, network_name, site_ID,
+                                    latitude, longitude,
                                     start_date=None, end_date=None):
 
 
-    unique_dict = {'latitude': latitude, 'longitude': longitude,
-                   'above_below_km': above_below_km, 'left_right_km': left_right_km}
+    unique_dict = {'network_name': network_name, 'site_ID': site_ID}
     common_dict = _do_common_checks(product, band, latitude, longitude,
                                     start_date, end_date)
     common_dict.update(unique_dict)
@@ -731,6 +739,13 @@ def _do_common_checks(*args):
         print('Band not available for {}! Check available bands '
               'list using get_band_list(product)'.format(product)); raise
 
+    # Check lat and long are legit
+    try:
+        assert -180 <= longitude <= 180
+        assert -90 <= latitude <= 90
+    except AssertionError:
+        print ('Latitude or longitude out of bounds'); raise RuntimeError
+
     # Check and set MODIS dates
     avail_dates = get_product_dates(product, latitude, longitude)
     py_avail_dates = np.array([dt.datetime.strptime(x['modis_date'], 'A%Y%j').date()
@@ -749,8 +764,6 @@ def _do_common_checks(*args):
     return {'product': product, 'band': band,
             'start_date': avail_dates[start_idx]['modis_date'],
             'end_date': avail_dates[end_idx]['modis_date']}
-
-
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
