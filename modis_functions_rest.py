@@ -6,7 +6,6 @@ Created on Tue Jan 16 14:38:30 2018
 @author: ian
 """
 # System modules
-from collections import namedtuple
 from collections import OrderedDict
 import copy as cp
 import datetime as dt
@@ -91,32 +90,20 @@ class modis_data():
                  qcfiltered=False):
 
         # Create a configuration namespace to pass to funcs
-        config_object = get_config_file_by_coords(product, band,
-                                                  latitude, longitude,
-                                                  start_date, end_date,
-                                                  above_below_km, left_right_km)
+        config_object = get_config_obj_by_coords(product, band,
+                                                 latitude, longitude,
+                                                 start_date, end_date,
+                                                 above_below_km, left_right_km,
+                                                 site, qcfiltered)
 
-        # Get the data and write additional attributes
+        # Get the data
         self.data_array = request_subset_by_coords(config_object)
-        band_attrs = get_band_list(product)[band]
-        band_attrs.update({'site': site})
-        self.data_array.attrs.update(band_attrs)
-
-        # Attach the original configs
-        self.configs = config_object
 
         # Apply range limits
         self.data_array: self._apply_range_limits()
 
         # QC if requested
-        if qcfiltered: self._qc_data_array()
-        #     qc_dict = get_qc_details(product)
-        #     if not qc_dict: print('No QC variable defined!'); return
-        #     qc_array = request_subset_by_coords(product, latitude, longitude,
-        #                                         qc_dict['qc_name'],
-        #                                         start_date, end_date,
-        #                                         subset_height_km, subset_width_km)
-        #     self._qc_data_array(qc_array, qc_dict)
+        if qcfiltered: self._qc_data_array(config_object)
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -223,16 +210,21 @@ class modis_data():
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
-    def _qc_data_array(self, qc_array):
+    def _qc_data_array(self, config_obj):
 
-        # Apply qc
+        # Get qc variable and update config file
         qc_dict = get_qc_details(self.data_array.product)
         if not qc_dict: print('No QC variable defined!'); return
+        setattr(config_obj, 'band', qc_dict['qc_name'])
+
+        # Get qc data
+        qc_array = request_subset_by_coords(config_obj)
+
+        # Apply qc
         if qc_dict['is_binary']:
             f = lambda x: int(bin(int(x)).split('b')[1].zfill(8)[:-5],2)
             vector_f = np.vectorize(f)
             qc_array.data = vector_f(qc_array.data)
-
         max_allowed = qc_dict['reliability_threshold']
         self.data_array = self.data_array.where((qc_array <= max_allowed))
     #--------------------------------------------------------------------------
@@ -273,67 +265,18 @@ class modis_data_network(modis_data):
     def __init__(self, product, band, network_name, site_ID,
                  start_date = None, end_date = None, qcfiltered = False):
 
-        try:
-            assert network_name in get_network_list()
-        except AssertionError:
-            print ('Network not available from web service! Check available '
-                   'networks list using get_network_list()'); raise KeyError
-        try:
-            site_attrs = get_network_list(network_name)[site_ID]
-        except KeyError:
-            print('Site ID code not found! Check available site ID codes '
-                  'using get_network_list(network)'); raise
-
         # Create a configuration namespace to pass to funcs
-        config_object = get_config_file_by_network_site(product, band,
+        config_object = get_config_obj_by_network_site(product, band,
                                                         network_name, site_ID,
-                                                        site_attrs['latitude'],
-                                                        site_attrs['longitude'],
-                                                        start_date, end_date)
+                                                        start_date, end_date,
+                                                        qcfiltered)
 
-        # Get the data and write additional attributes
+        # Get the data
         self.data_array = request_subset_by_siteid(config_object,
                                                    qcfiltered = qcfiltered)
-        band_attrs = get_band_list(product)[band]
-        band_attrs.update({'site': site_attrs['network_sitename']})
-        self.data_array.attrs.update(band_attrs)
-
-        # Attach the original configs
-        self.configs = config_object
 
         # Apply range limits
-        self._apply_range_limits()
-
-        # if not product in get_product_list(include_details = False):
-        #     raise KeyError('Product not available from web service! Check '
-        #                    'available products list using get_product_list()')
-        # try:
-        #     band_attrs = get_band_list(product)[band]
-        # except KeyError:
-        #     raise KeyError('Band not available for {}! Check available bands '
-        #                    'list using get_band_list(product)'.format(product))
-        # try:
-        #     site_attrs = get_network_list(network_name)[site_ID]
-        # except KeyError:
-        #     raise KeyError('Site ID code not found! Check available site ID '
-        #                    'codes using get_network_list(network)')
-        # if not network_name in get_network_list():
-        #     raise KeyError('Network not available from web service! Check '
-        #                    'available networks list using get_network_list()')
-
-        # if start_date is None or end_date is None:
-        #     dates = get_product_dates(product,
-        #                               site_attrs['latitude'],
-        #                               site_attrs['longitude'])
-        # if start_date is None:
-        #     start_date = modis_to_from_pydatetime(dates[0]['modis_date'])
-        # if end_date is None:
-        #     end_date = modis_to_from_pydatetime(dates[-1]['modis_date'])
-
-        # Get the data and write additional attributes
-        # self.data_array = request_subset_by_siteid(product, band, network_name,
-        #                                            site_ID, start_date, end_date,
-        #                                            qcfiltered = qcfiltered)
+        if not qcfiltered: self._apply_range_limits()
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -468,7 +411,7 @@ def get_network_list(network = None, include_details = True):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def _get_pixel_subset(x_arr, pixels_per_side = 3):
+def get_pixel_subset(x_arr, pixels_per_side = 3):
 
     """Create a spatial subset of a larger dataset (relative to centre pixel)"""
 
@@ -561,15 +504,25 @@ def _process_data(data, configs):
 
     """Process the raw data into a more human-intelligible format (xarray)"""
 
+    # Generate metadata - note that scaling info is NOT available in the text
+    # headers of the raw data when retrieved from a collection, but it can be
+    # retrieved for the product (it is called 'scale_factor' instead of 'scale'
+    # so here we retrieve it and rename it to scale)
     meta = {key:value for key,value in list(data[0].items())
             if key != "subset" }
     meta['product'] = configs.product
     meta['band'] = configs.band
-    if 'scale' in meta:
-        try: scale = float(meta['scale'])
-        except ValueError: scale = None
-    if not 'scale' in meta: scale = None
+    meta['retrieval_type'] = configs.retrieval_type
+    meta['qcFiltered'] = configs.qcFiltered
+    meta['site'] = configs.site
+    band_attrs = get_band_list(configs.product)[configs.band]
+    meta.update(band_attrs)
+    if 'scale_factor' in meta: meta['scale'] = meta.pop('scale_factor')
+    if not 'scale_factor' in meta and not 'scale' in meta:
+        meta['scale'] = 'Not available'
     data_dict = {'dates': [], 'arrays': [], 'metadata': meta}
+
+    # Iterate on data list and convert to 3D numpy array
     for i in data:
         for j in i['subset']:
             if j['band'] == meta['band']:
@@ -582,7 +535,15 @@ def _process_data(data, configs):
                                                         meta['ncols'])
                 data_dict['arrays'].append(new_array)
     stacked_array = np.dstack(data_dict['arrays'])
-    if scale: stacked_array = stacked_array * scale
+
+    # Apply scaling (if applicable - note that if data is derived from
+    # collections and qc is set to True, collection has already had scaling
+    # applied!)
+    if not (meta['qcFiltered'] and 'by_collection' in meta['retrieval_type']):
+        try: stacked_array *= float(meta['scale'])
+        except (TypeError, ValueError): pass
+
+    # Assign coords and attributes
     dtdates = [dt.datetime.strptime(d,"%Y-%m-%d") for d in data_dict['dates']]
     xcoordinates = ([float(meta['xllcorner'])] +
                     [i * meta['cellsize'] + float(meta['xllcorner'])
@@ -621,20 +582,21 @@ def request_subset_by_coords(configs, qcfiltered = False):
     subsets = []
     print('Retrieving data for product {0}, band {1}:'
           .format(configs.product, configs.band))
+    req_list = []
     for i, chunk in enumerate(date_chunks):
         print('[{0} / {1}] {2} - {3}'.format(str(i + 1), str(len(date_chunks)),
               chunk[0], chunk[-1]))
         url = getSubsetURL(chunk[0], chunk[-1])
         subset = request_subset_by_URLstring(url)
         subsets.append(subset)
-    return _process_data(subsets, configs)
+        req_list.append(url)
+    combined_array = _process_data(subsets, configs)
+    combined_array.attrs['header'] = req_list
+    return combined_array
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
 def request_subset_by_siteid(configs, qcfiltered = False):
-
-# def request_subset_by_siteid(prod, band, network, siteid, start_date, end_date,
-#                              qcfiltered = False):
 
     """Get the data from ORNL DAAC by network and site id"""
 
@@ -645,7 +607,8 @@ def request_subset_by_siteid(configs, qcfiltered = False):
                     configs.site_ID, subset_str, configs.band, '&startDate=',
                     configs.start_date, '&endDate=', configs.end_date]))
     subset = request_subset_by_URLstring(url)
-    return _process_data([subset], configs)
+    combined_array = _process_data([subset], configs)
+    return combined_array
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -676,21 +639,12 @@ def _smooth_signal(series, n_points = 11, poly_order = 3):
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def modis_object(by_coords=True):
-    if by_coords:
-        return namedtuple('modis_by_coords',
-                          ['product', 'band', 'latitude', 'longitude',
-                           'start_date', 'end_date', 'subset_height_km',
-                           'subset_width_km'])
-    return namedtuple('modis_by_network',
-                      ['product', 'band', 'network_name', 'site_ID',
-                       'start_date', 'end_date'])
-#------------------------------------------------------------------------------
+def get_config_obj_by_coords(product, band, latitude, longitude,
+                             start_date=None, end_date=None,
+                             above_below_km=0, left_right_km=0,
+                             site=None, qcfiltered=False):
 
-#------------------------------------------------------------------------------
-def get_config_file_by_coords(product, band, latitude, longitude,
-                              start_date=None, end_date=None,
-                              above_below_km=0, left_right_km=0):
+    """Docstring here"""
 
     try:
         assert isinstance(above_below_km, int)
@@ -698,7 +652,9 @@ def get_config_file_by_coords(product, band, latitude, longitude,
     except AssertionError:
         print ('"above_below_km" and "left_right_km" kwargs must be integers')
         raise TypeError
-    unique_dict = {'above_below_km': above_below_km, 'left_right_km': left_right_km}
+    unique_dict = {'above_below_km': above_below_km, 'left_right_km': left_right_km,
+                   'qcFiltered': qcfiltered, 'retrieval_type': 'by_coords',
+                   'site': site}
     common_dict = _do_common_checks(product, band, latitude, longitude,
                                     start_date, end_date)
     common_dict.update(unique_dict)
@@ -706,12 +662,29 @@ def get_config_file_by_coords(product, band, latitude, longitude,
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
-def get_config_file_by_network_site(product, band, network_name, site_ID,
-                                    latitude, longitude,
-                                    start_date=None, end_date=None):
+def get_config_obj_by_network_site(product, band, network_name, site_ID,
+                                   start_date=None, end_date=None,
+                                   qcfiltered=False):
 
+    """Docstring here"""
 
-    unique_dict = {'network_name': network_name, 'site_ID': site_ID}
+    # Check network and site ID are legit
+    try:
+        assert network_name in get_network_list()
+    except AssertionError:
+        print ('Network not available from web service! Check available '
+               'networks list using get_network_list()'); raise KeyError
+    try:
+        site_attrs = get_network_list(network_name)[site_ID]
+    except KeyError:
+        print('Site ID code not found! Check available site ID codes '
+              'using get_network_list(network)'); raise
+    latitude, longitude = site_attrs['latitude'], site_attrs['longitude']
+    unique_dict = {'network_name': network_name, 'site_ID': site_ID,
+                   'qcFiltered': qcfiltered,
+                   'retrieval_type': ('by_collection: {0}, {1}'
+                                      .format(network_name, site_ID)),
+                   'site': site_attrs['network_sitename']}
     common_dict = _do_common_checks(product, band, latitude, longitude,
                                     start_date, end_date)
     common_dict.update(unique_dict)
@@ -732,7 +705,6 @@ def _do_common_checks(*args):
     except AssertionError:
         print('Product not available from web service! Check available '
               'products list using get_product_list()'); raise KeyError
-
     try:
         get_band_list(product)[band]
     except KeyError:
@@ -846,7 +818,7 @@ if __name__ == "__main__":
                                    1, 1, site, qcfiltered=True)
 
                 # Reduce the number of pixels to 5 x 5
-                x.data_array = _get_pixel_subset(x.data_array, pixels_per_side = 5)
+                x.data_array = get_pixel_subset(x.data_array, pixels_per_side = 5)
 
                 # Get outputs and write to file (plots then nc)
                 thisfig = x.plot_data(plot_to_screen=False)
