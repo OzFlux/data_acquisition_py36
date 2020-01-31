@@ -10,6 +10,7 @@ from collections import OrderedDict
 import copy as cp
 import datetime as dt
 import json
+import math
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -267,9 +268,9 @@ class modis_data_network(modis_data):
 
         # Create a configuration namespace to pass to funcs
         config_object = get_config_obj_by_network_site(product, band,
-                                                        network_name, site_ID,
-                                                        start_date, end_date,
-                                                        qcfiltered)
+                                                       network_name, site_ID,
+                                                       start_date, end_date,
+                                                       qcfiltered)
 
         # Get the data
         self.data_array = request_subset_by_siteid(config_object,
@@ -300,16 +301,6 @@ class modis_data_network(modis_data):
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF FUNCTION SECTION ###
-#------------------------------------------------------------------------------
-
-#------------------------------------------------------------------------------
-# def bin_converter(x): return int(bin(int(x)).split('b')[1].zfill(8)[:-5],2)
-
-    # data_list = []
-    # for x in series:
-    #     this_bin = bin(int(x)).split('b')[-1].zfill(8)
-    #     data_list.append(int(this_bin[:-5], 2))
-    # return data_list
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -345,6 +336,13 @@ def _get_chunks(l, n = 10):
     """yield successive n-sized chunks from list l"""
 
     for i in range(0, len(l), n): yield l[i: i + n]
+#------------------------------------------------------------------------------
+
+#------------------------------------------------------------------------------
+def get_dims_reqd_for_npixels(product, n_per_side):
+
+    pixel_res = get_product_list(product)[product]['resolution_meters']
+    return math.ceil((n_per_side - 1) * pixel_res / 1000)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -653,10 +651,9 @@ def get_config_obj_by_coords(product, band, latitude, longitude,
         print ('"above_below_km" and "left_right_km" kwargs must be integers')
         raise TypeError
     unique_dict = {'above_below_km': above_below_km, 'left_right_km': left_right_km,
-                   'qcFiltered': qcfiltered, 'retrieval_type': 'by_coords',
-                   'site': site}
+                   'retrieval_type': 'by_coords', 'site': site}
     common_dict = _do_common_checks(product, band, latitude, longitude,
-                                    start_date, end_date)
+                                    start_date, end_date, qcfiltered)
     common_dict.update(unique_dict)
     return SimpleNamespace(**common_dict)
 #------------------------------------------------------------------------------
@@ -681,12 +678,11 @@ def get_config_obj_by_network_site(product, band, network_name, site_ID,
               'using get_network_list(network)'); raise
     latitude, longitude = site_attrs['latitude'], site_attrs['longitude']
     unique_dict = {'network_name': network_name, 'site_ID': site_ID,
-                   'qcFiltered': qcfiltered,
                    'retrieval_type': ('by_collection: {0}, {1}'
                                       .format(network_name, site_ID)),
                    'site': site_attrs['network_sitename']}
     common_dict = _do_common_checks(product, band, latitude, longitude,
-                                    start_date, end_date)
+                                    start_date, end_date, qcfiltered)
     common_dict.update(unique_dict)
     return SimpleNamespace(**common_dict)
 #------------------------------------------------------------------------------
@@ -694,10 +690,13 @@ def get_config_obj_by_network_site(product, band, network_name, site_ID,
 #------------------------------------------------------------------------------
 def _do_common_checks(*args):
 
+    """Does basic consistency checks on the configuration arguments passed"""
+
     # Unpack args
     product, band = args[0], args[1]
     latitude, longitude = args[2], args[3]
     start_date, end_date = args[4], args[5]
+    qcfiltered = args[6]
 
     # Check product and band are legit
     try:
@@ -718,6 +717,11 @@ def _do_common_checks(*args):
     except AssertionError:
         print ('Latitude or longitude out of bounds'); raise RuntimeError
 
+    # Check qcfiltered kwarg is bool
+    try: assert isinstance(qcfiltered, bool)
+    except AssertionError():
+        print ('"qcfiltered" kwarg must be of type bool'); raise TypeError
+
     # Check and set MODIS dates
     avail_dates = get_product_dates(product, latitude, longitude)
     py_avail_dates = np.array([dt.datetime.strptime(x['modis_date'], 'A%Y%j').date()
@@ -732,11 +736,11 @@ def _do_common_checks(*args):
         py_end_dt = py_avail_dates[-1]
     start_idx = abs(py_avail_dates - py_start_dt).argmin()
     end_idx = abs(py_avail_dates - py_end_dt).argmin()
-
     return {'product': product, 'band': band,
             'latitude': latitude, 'longitude': longitude,
             'start_date': avail_dates[start_idx]['modis_date'],
-            'end_date': avail_dates[end_idx]['modis_date']}
+            'end_date': avail_dates[end_idx]['modis_date'],
+            'qcFiltered': 'True' if qcfiltered else False}
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -765,7 +769,7 @@ def _band_short_name(band):
 if __name__ == "__main__":
 
     # Get sites info for processing
-    sites = sites=utils.get_ozflux_site_list(master_file_path)
+    sites = utils.get_ozflux_site_list(master_file_path)
 
     products_dict = _product_band_to_retrieve()
 
@@ -775,8 +779,6 @@ if __name__ == "__main__":
     coll_dict = {ozflux_modis_collection_sites[x]['network_sitename']:
                  x for x in ozflux_modis_collection_sites.keys()}
     coll_dict['Wombat State Forest'] = coll_dict.pop('Wombat')
-
-
 
     # Iterate on product (create dirs where required)
     for product in products_dict:
@@ -789,7 +791,7 @@ if __name__ == "__main__":
             short_name = _band_short_name(band)
 
             # Get site data and write to netcdf
-            for site in sites.index[:1]:
+            for site in sites.index[2:10]:
 
                 print('Retrieving data for site {}:'.format(site))
 
@@ -798,24 +800,30 @@ if __name__ == "__main__":
                                                        short_name))
                 full_nc_path = target + '.nc'
                 full_plot_path = target + '.png'
-                try: first_date = dt.date(int(sites.loc[site, 'Start year']) - 1, 7, 1)
-                except (TypeError, ValueError): first_date = None
-                try: last_date = dt.date(int(sites.loc[site, 'End year']) + 1, 6, 1)
-                except (TypeError, ValueError): last_date = None
+                try:
+                    first_date = dt.date(int(sites.loc[site, 'Start year']) - 1, 7, 1)
+                    first_date_modis = dt.datetime.strftime(first_date, '%Y%m%d')
+                except (TypeError, ValueError): first_date_modis = None
+                try:
+                    last_date = dt.date(int(sites.loc[site, 'End year']) + 1, 6, 1)
+                    last_date_modis = dt.datetime.strftime(last_date, '%Y%m%d')
+                except (TypeError, ValueError): last_date_modis = None
 
                 # Get sites in the collection
                 if site in coll_dict.keys():
                     site_code = coll_dict[site]
-                    x = modis_data_network(product, band, 'OZFLUX',
-                                           site_code, first_date, last_date,
+                    x = modis_data_network(product, band, 'OZFLUX', site_code,
+                                           first_date_modis, last_date_modis,
                                            qcfiltered=True)
 
                 # Get sites not in the collection
                 else:
+                    km_dims = get_dims_reqd_for_npixels(product, 5)
                     x = modis_data(product, band,
                                    sites.loc[site, 'Latitude'],
-                                   sites.loc[site, 'Longitude'], first_date, last_date,
-                                   1, 1, site, qcfiltered=True)
+                                   sites.loc[site, 'Longitude'],
+                                   first_date_modis, last_date_modis,
+                                   km_dims, km_dims, site, qcfiltered=True)
 
                 # Reduce the number of pixels to 5 x 5
                 x.data_array = get_pixel_subset(x.data_array, pixels_per_side = 5)
