@@ -15,6 +15,7 @@ from pytz import timezone
 from timezonefinder import TimezoneFinder as tzf
 import xarray as xr
 import xlrd
+import pdb
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF CLASS SECTION ###
@@ -51,8 +52,8 @@ class access_data_converter():
                 _set_variable_attributes(conv_ds,
                                          round(this_lat.item(), 4),
                                          round(this_lon.item(), 4))
-                _rename_variables(conv_ds, i, j)
-                results.append(conv_ds)
+                results.append(_rename_variables(conv_ds, i, j))
+                #results.append(conv_ds)
         in_ds.close()
         merge_ds = xr.merge(results, compat='override')
         offset = self.get_utc_offset()
@@ -188,7 +189,7 @@ def _rename_variables(ds, i, j):
     var_list = [x for x in list(ds.variables) if not x in list(ds.dims)]
     name_swap_dict = {x: '{}_{}'.format(x, str(i) + str(j))
                       for x in var_list}
-    ds = ds.rename(name_swap_dict)
+    return ds.rename(name_swap_dict)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
