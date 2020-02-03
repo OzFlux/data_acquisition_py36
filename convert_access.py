@@ -15,7 +15,6 @@ from pytz import timezone
 from timezonefinder import TimezoneFinder as tzf
 import xarray as xr
 import xlrd
-import pdb
 
 #------------------------------------------------------------------------------
 ### BEGINNING OF CLASS SECTION ###
@@ -55,7 +54,7 @@ class access_data_converter():
                 _rename_variables(conv_ds, i, j)
                 results.append(conv_ds)
         in_ds.close()
-        merge_ds = xr.merge(results)
+        merge_ds = xr.merge(results, compat='override')
         offset = self.get_utc_offset()
         merge_ds.time.data = (pd.to_datetime(merge_ds.time.data) + 
                               dt.timedelta(hours=offset))
@@ -76,7 +75,12 @@ class access_data_converter():
     #--------------------------------------------------------------------------
     def get_raw_file(self):
 
-        return xr.open_mfdataset(self.get_file_list(), concat_dim='time')
+        def preproc(ds):
+            idx = np.unique(ds.time.data, return_index=True)[1]
+            return ds.isel(time=idx)
+        
+        return xr.open_mfdataset(self.get_file_list(), combine='by_coords', 
+                                 preprocess=preproc)
     #--------------------------------------------------------------------------
 
     #--------------------------------------------------------------------------
@@ -184,7 +188,7 @@ def _rename_variables(ds, i, j):
     var_list = [x for x in list(ds.variables) if not x in list(ds.dims)]
     name_swap_dict = {x: '{}_{}'.format(x, str(i) + str(j))
                       for x in var_list}
-    ds.rename(name_swap_dict, inplace=True)
+    ds = ds.rename(name_swap_dict)
 #------------------------------------------------------------------------------
 
 #------------------------------------------------------------------------------
@@ -210,7 +214,7 @@ def _screen_vars(series):
 #--------------------------------------------------------------------------
 def _set_variable_attributes(ds, latitude, longitude):
 
-    print([x for x in attrs_dict.keys() if not x in list(ds.variables)])
+    #print([x for x in attrs_dict.keys() if not x in list(ds.variables)])
     for this_var in list(ds.variables):
         if this_var == 'time': continue
         try:
