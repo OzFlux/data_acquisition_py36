@@ -117,8 +117,8 @@ class access_data_converter():
 
         print('Writing netCDF file for site {}'.format(self.site_name))
         dataset = self.create_dataset()
-        fname = '{}_ozflux_access.nc'.format(''.join(self.site_name.split(' ')))
-        target = os.path.join(write_path, 'OzFlux_files', fname)
+        fname = '{}_ACCESS.nc'.format(''.join(self.site_name.split(' ')))
+        target = os.path.join(write_path, 'PFP_format', fname)
         dataset.to_netcdf(target, format='NETCDF4')
     #--------------------------------------------------------------------------
 
