@@ -777,7 +777,7 @@ if __name__ == "__main__":
     aws.write_to_text_file(aws_file_path)
 
     # Get conversion class and write text data to nc file
-    nc_path = '/rdsi/market/CloudStor/Shared/BOM/AWS/PFP_format'
+    nc_path = '/rdsi/market/CloudStor/Shared/BOM/PFP_format'
     conv_class = bom_data_converter()
     site_list = list(conv_class.ozflux_sites.index)
     for site in site_list:
